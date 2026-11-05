@@ -1,0 +1,797 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>K线播放器 · 音乐可视化</title>
+<script>
+window.addEventListener('error', function (e) {
+  document.title = 'ERR: ' + e.message;
+  var d = document.createElement('div');
+  d.style.cssText = 'position:fixed;left:0;right:0;top:0;z-index:9999;background:#b71c1c;color:#fff;padding:10px 14px;font:12px Consolas,monospace;white-space:pre-wrap';
+  d.textContent = 'JS ERROR: ' + e.message + ' @ ' + (e.filename || '') + ':' + (e.lineno || '');
+  document.body.appendChild(d);
+}, true);
+</script>
+<link rel="stylesheet" href="styles.css?v=20261105k">
+</head>
+<body>
+<div class="load-bar" id="loadBar" hidden><i id="loadBarFill"></i><b id="loadBarText"></b></div>
+<div id="app">
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-logo">K</span>
+      <span class="brand-name">K线播放器</span>
+      <span class="brand-sub">音乐可视化终端</span>
+    </div>
+    <nav class="topnav" id="topnav">
+      <button data-nav="quote" class="active">播放</button>
+      <button data-nav="visual">可视化</button>
+      <button data-nav="chapters">段落</button>
+      <button data-nav="library">曲库</button>
+      <button data-nav="help">帮助</button>
+    </nav>
+    <div class="top-search">
+      <svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"></circle><path d="M15.5 15.5L21 21"></path></svg>
+      <input id="searchInput" placeholder="搜索曲目 / 文件名" autocomplete="off">
+    </div>
+    <div class="top-actions">
+      <span class="src" id="sourceLabel">音频源 · 本地文件</span>
+      <span class="clock" id="titleClock">--:--:--</span>
+      <button class="btn ghost" id="btnStage" title="普通界面 / 3D 沉浸界面">界面 · 普通</button>
+      <span class="hdr-badge" id="hdrBadge" hidden title="当前显示器支持 HDR；导出母版为 HDR10（bt2020 / PQ）">HDR</span>
+      <button class="btn ghost" id="btnThemeTop" title="切换深浅主题 (T)">深色</button>
+      <button class="btn ghost" id="btnImportTop">导入音视频</button>
+      <div class="dropdown drop-right" id="exportDd">
+        <button class="btn ghost" id="btnExport">导出 ▾</button>
+        <div class="dropdown-pop" id="exportPop">
+          <button class="ex-item" id="btnExportPng">导出当前图 PNG</button>
+          <button class="ex-item" id="btnExportVideo">录制视频 WebM</button>
+        </div>
+      </div>
+      <button class="btn primary" id="btnShareTop">生成海报</button>
+    </div>
+  </header>
+
+  <div class="workspace">
+
+    <aside class="toolrail">
+      <button id="trSide" title="曲库">
+        <svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"></path></svg>
+      </button>
+      <div class="rail-sep"></div>
+      <button id="trPlay" class="tr-main" title="播放 / 暂停">
+        <svg id="trPlayIcon" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"></path></svg>
+      </button>
+      <button id="trPrev" title="上一根">
+        <svg viewBox="0 0 24 24"><path d="M6 5h2v14H6zM19 5v14l-9-7z"></path></svg>
+      </button>
+      <button id="trNext" title="下一根">
+        <svg viewBox="0 0 24 24"><path d="M16 5h2v14h-2zM5 5l9 7-9 7z"></path></svg>
+      </button>
+      <button id="trSpeed" title="切换倍速" class="tr-text">1x</button>
+      <div class="rail-sep"></div>
+      <button id="trMA" class="tr-text active" title="均线">MA</button>
+      <button id="trMACD" class="tr-text active" title="MACD">M</button>
+      <button id="trSound" class="tr-text" title="音效">音</button>
+      <div class="rail-sep"></div>
+      <button id="trShare" title="生成海报">
+        <svg viewBox="0 0 24 24"><path d="M12 3v12M7 8l5-5 5 5M5 14v6h14v-6"></path></svg>
+      </button>
+      <button id="trFull" title="全屏">
+        <svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"></path></svg>
+      </button>
+    </aside>
+
+    <aside class="sidebar" id="sidebar">
+      <div class="side-head">
+        <span class="side-title">播放列表</span>
+        <span class="side-tools">
+          <select class="side-sort" id="sideSort" title="排序">
+            <option value="default">默认序</option>
+            <option value="name">按名称</option>
+            <option value="duration">按时长</option>
+            <option value="bpm">按 BPM</option>
+          </select>
+          <button id="btnImportSide" title="导入音频 / 视频 / K线 CSV">＋</button>
+          <button id="btnCollapseSide" title="收起播放列表">«</button>
+        </span>
+      </div>
+      <div class="side-body" id="sideBody">
+        <div class="side-label queue-label" data-group="queue"><span>播放队列</span><span class="side-count" id="countQueue">0</span><button class="side-mini" id="btnClearQueue" title="清空队列">清空</button></div>
+        <div id="listQueue" class="quote-list"></div>
+        <div class="side-label" data-group="music"><span>曲目 MUSIC</span><span class="side-count" id="countMusic">1</span></div>
+        <div id="listMusic" class="quote-list"></div>
+        <div class="side-label" data-group="fx"><span>K线示例 · 外汇</span><span class="side-count" id="countFx">4</span></div>
+        <div id="listFx" class="quote-list"></div>
+        <div class="side-label" data-group="index"><span>K线示例 · 指数</span><span class="side-count" id="countIndex">5</span></div>
+        <div id="listIndex" class="quote-list"></div>
+        <div class="side-label" data-group="rt"><span>A股 · 实时行情</span></div>
+        <div class="rt-form">
+          <input id="rtCode" class="rt-input" placeholder="代码 600519 / sh600519" maxlength="8" spellcheck="false">
+          <select id="rtPeriod" class="rt-sel">
+            <option value="101">日K</option>
+            <option value="102">周K</option>
+            <option value="103">月K</option>
+          </select>
+          <button id="btnRtLoad" class="rt-btn">拉取</button>
+        </div>
+        <div class="rt-chips" id="rtChips">
+          <button data-code="sh000001">上证指数</button>
+          <button data-code="sz399001">深证成指</button>
+          <button data-code="sh600519">贵州茅台</button>
+          <button data-code="sz300750">宁德时代</button>
+        </div>
+        <div class="side-tip rt-tip">数据来自东方财富公开行情（同花顺无公开 API），前复权；仅本地请求，不上传任何数据。</div>
+
+        <div class="side-label local-label" id="localLabel" data-group="local" hidden><span>本地 K 线</span><span class="side-count" id="countLocal">0</span></div>
+        <div id="listLocal" class="quote-list"></div>
+        <div class="side-tip">
+          <b>玩法</b> 选曲目，按播放。红绿=最大音量走势。
+        </div>
+      </div>
+      <div class="side-foot">
+        <span>音频：本地文件 · Web Audio</span>
+        <span>K线：KLineChart 引擎</span>
+      </div>
+    </aside>
+
+    <main class="main">
+      <div class="index-strip" id="indexStrip">
+        <span class="is-item"><em>谱心指数</em><b id="isFreq">--</b><i id="isFreqChg">--</i></span>
+        <span class="is-item"><em>超低频</em><b id="isG0">--</b><i id="isC0">--</i></span>
+        <span class="is-item"><em>低频</em><b id="isG1">--</b><i id="isC1">--</i></span>
+        <span class="is-item"><em>中频</em><b id="isG2">--</b><i id="isC2">--</i></span>
+        <span class="is-item"><em>高频</em><b id="isG3">--</b><i id="isC3">--</i></span>
+        <span class="is-tip">行情由音频实时合成 · 仅作可视化</span>
+      </div>
+      <div class="quotebar">
+    <div class="quote-main">
+      <div class="quote-title">
+        <span id="qNameTop">霓虹脉冲</span>
+        <span id="qCodeTop">DEMO</span>
+        <span id="qMarketTop" class="tag">音乐</span>
+        <span class="state-pill" id="qStateTop">播放</span>
+      </div>
+      <div class="quote-price"><span id="qPriceTop">--</span><span class="price-unit" id="priceUnit">Hz</span><span id="qChangeTop">--</span></div>
+    </div>
+    <div class="quote-chapter" id="qChapter" hidden></div>
+    <div class="quote-grid" id="quoteGrid">
+      <div><label id="lblOpen">开</label><b id="qOpenTop">--</b></div>
+      <div><label id="lblHigh">高</label><b id="qHighTop">--</b></div>
+      <div><label id="lblLow">低</label><b id="qLowTop">--</b></div>
+      <div><label id="lblPrev">昨收</label><b id="qPrevTop">--</b></div>
+      <div><label id="lblVol">量</label><b id="qVolTop">--</b></div>
+      <div><label id="lblAmp">幅</label><b id="qAmpTop">--</b></div>
+      <div><label id="lblRH">区高</label><b id="qRangeHighTop">--</b></div>
+      <div><label id="lblRL">区低</label><b id="qRangeLowTop">--</b></div>
+      <div><label id="lblCount">根</label><b id="qCountTop">--</b></div>
+    </div>
+  </div>
+
+      <div class="periodbar">
+        <div class="periods" id="periodTabs">
+          <button data-win="0.5">0.5sK</button>
+          <button data-win="1" class="active">1sK</button>
+          <button data-win="2">2sK</button>
+          <button data-win="4">4sK</button>
+          <button data-win="8">8sK</button>
+        </div>
+        <div class="period-sep"></div>
+        <div class="dropdown">
+          <button id="btnIndicators" class="link-btn">指标 ▾</button>
+          <div class="dropdown-pop" id="indicatorPop">
+            <label><input type="checkbox" id="chkMA" checked> 均线 MA5/10/20/30/60</label>
+            <label><input type="checkbox" id="chkEMA" checked> EMA 12 / 26</label>
+            <label><input type="checkbox" id="chkBoll"> 布林带 BOLL</label>
+            <label><input type="checkbox" id="chkHighLow" checked> 高低点标记</label>
+            <label><input type="checkbox" id="chkHollow"> 阳线空心</label>
+          </div>
+        </div>
+        <div class="period-tools">
+          <button id="btnLoopTop">循环</button>
+          <button id="btnSoundTop">音效</button>
+          <button id="btnSonifyTop">声化</button>
+          <button id="btnReplayTop">回放</button>
+          <button id="btnFullTop">全屏</button>
+        </div>
+        <div class="period-date" id="chartDate">--</div>
+      </div>
+
+      <div class="chart-wrap" id="chartWrap">
+        <canvas id="bg3d"></canvas>
+        <div id="videoLayerBox" hidden></div>
+        <div id="chart"></div>
+        <canvas id="musicCanvas"></canvas>
+        <div class="draw-tools" id="drawTools" hidden>
+          <button data-tool="horizontalStraightLine" title="水平线">━</button>
+          <button data-tool="verticalStraightLine" title="垂直线">┃</button>
+          <button data-tool="straightLine" title="趋势线">╱</button>
+          <button data-tool="rayLine" title="射线">↗</button>
+          <button data-tool="fibonacciLine" title="斐波那契">≋</button>
+          <button data-tool="clear" title="清除画线">⌫</button>
+        </div>
+        <div class="chart-legend" id="chartLegend"></div>
+        <div class="sub-layer" id="subLayer" hidden></div>
+        <div class="danmaku-layer" id="danmakuLayer"></div>
+        <div class="event-banner" id="eventBanner">
+          <span class="event-tag">段落</span>
+          <div class="event-body">
+            <div class="event-title"></div>
+            <div class="event-desc"></div>
+          </div>
+          <span class="event-price"></span>
+        </div>
+        <div class="start-overlay" id="startOverlay">
+          <div class="start-panel">
+            <div class="start-kicker">K-LINE PLAYER · 音乐可视化</div>
+            <div class="start-title" id="startTitle">霓虹脉冲</div>
+            <div class="start-sub" id="startSub">--</div>
+            <div class="start-desc" id="startDesc">把一段音乐，当成一部 K 线电影来看。</div>
+            <div class="start-actions">
+              <button class="start-play" id="btnStartPlay">▶ 开始播放</button>
+              <button class="start-from" id="btnStartFrom">从头播放</button>
+            </div>
+            <button class="start-close" id="btnStartClose" title="关闭">×</button>
+            <div class="start-hint">空格 播放/暂停 · ← → 单根 · 滚轮 缩放 · 1-9 跳段落</div>
+          </div>
+        </div>
+        <div class="chart-hint" id="chartHint">点击 K 线跳转 · 滚轮缩放 · 空格播放/暂停</div>
+        <button class="side-float" id="btnSideFloat" title="展开播放列表">曲库</button>
+        <div class="toast-stack" id="toastStack"></div>
+      </div>
+
+      <div class="subtabs" id="subtabs">
+        <div class="subtab-group" id="subtabsMarket">
+          <button data-sub="MA" class="active">均线</button>
+          <button data-sub="VOL" class="active">成交量</button>
+          <button data-sub="MACD" class="active">MACD</button>
+          <span class="subtab-hint">副图指标 · 点击切换</span>
+        </div>
+        <div class="subtab-group" id="subtabsMusic">
+          <button data-sub="THICK" class="active">粗线 · 均值</button>
+          <button data-sub="THIN" class="active">细线 · 峰值</button>
+          <button data-sub="SPECL" class="active">左声道频谱</button>
+          <button data-sub="SPECR" class="active">右声道频谱</button>
+          <span class="subtab-hint">图层 · 点击切换</span>
+        </div>
+      </div>
+
+      <div class="chart-foot">
+        <div class="foot-ohlc" id="footOhlc">开 -- 高 -- 低 -- 收 -- 量 --</div>
+        <div class="foot-right">
+          <span id="footVolNote">最大音量（RMS）</span>
+          <span id="footMode">主图：频率 · 粗/细线 · 副图：L/R 频谱</span>
+          <span>KLineChart 引擎</span>
+        </div>
+      </div>
+
+    </main>
+
+    <aside class="rightpanel" id="rightPanel">
+      <div class="rp-rail" id="rpRail">
+        <button data-panel="quote" class="active">信息</button>
+        <button data-panel="book">盘口</button>
+        <button data-panel="flow">资金</button>
+        <button data-panel="visual">可视化</button>
+        <button data-panel="lyrics">歌词</button>
+        <button data-panel="chapters">段落</button>
+        <button class="rp-close" id="btnRpClose" title="关闭面板">×</button>
+      </div>
+      <div class="rp-content">
+        <section class="rp-pane active" id="paneQuote">
+          <div class="pane-head">
+            <div>
+              <div class="pane-title" id="qName">霓虹脉冲</div>
+              <div class="pane-sub" id="qCode">DEMO · 音乐</div>
+            </div>
+            <span class="pane-tag" id="qMarket">AUDIO</span>
+          </div>
+          <div class="pane-card">
+            <div class="card-title" id="qInfoTitle">曲目信息</div>
+            <div class="card-text" id="qDesc">--</div>
+          </div>
+          <div class="pane-card">
+            <div class="card-title" id="statsTitle">K线统计</div>
+            <table class="data-grid">
+              <tr><td id="qHighLabel">最高频率</td><td id="qHigh">--</td></tr>
+              <tr><td id="qHighDateLabel">最高时刻</td><td id="qHighDate">--</td></tr>
+              <tr><td id="qLowLabel">最低频率</td><td id="qLow">--</td></tr>
+              <tr><td id="qLowDateLabel">最低时刻</td><td id="qLowDate">--</td></tr>
+              <tr><td id="qBestLabel">最大频率跳升</td><td id="qBestDay">--</td></tr>
+              <tr><td id="qWorstLabel">最大频率回落</td><td id="qWorstDay">--</td></tr>
+              <tr><td id="qDDLabel">最大回落</td><td id="qDDDetail">--</td></tr>
+              <tr><td id="qVolNoteLabel">音量口径</td><td id="qVolNote">--</td></tr>
+            </table>
+          </div>
+          <div class="pane-card">
+            <div class="card-title">当前进度</div>
+            <div class="progress-line"><span id="qDate">--</span><span id="qIndex">--</span></div>
+            <div class="quote-progress"><i id="qProgress"></i></div>
+            <div class="card-foot"><span id="qRange">--</span><span id="qSpeed">1.0x</span></div>
+          </div>
+        </section>
+
+        <section class="rp-pane" id="paneLyrics">
+          <div class="pane-head">
+            <div>
+              <div class="pane-title">歌词</div>
+              <div class="pane-sub" id="lrcSub">未加载 · 可导入 LRC / SRT / VTT</div>
+            </div>
+            <span class="pane-tag">LYRIC</span>
+          </div>
+          <div class="lrc-tools">
+            <button class="mini-btn" id="btnLrcImport">导入</button>
+            <button class="mini-btn" id="btnLrcAi">AI 逐字</button>
+            <button class="mini-btn" id="btnLrcMinus">-0.5s</button>
+            <button class="mini-btn" id="btnLrcPlus">+0.5s</button>
+          </div>
+          <div class="lrc-list" id="lrcList"></div>
+        </section>
+
+        <section class="rp-pane" id="paneFlow">
+          <div class="pane-head">
+            <div>
+              <div class="pane-title">资金流向</div>
+              <div class="pane-sub">四档能量 · 相对全曲均值</div>
+            </div>
+            <span class="pane-tag">FLOW</span>
+          </div>
+          <div class="pane-card">
+            <div class="card-title">四档净流入</div>
+            <div id="flowRows">
+              <div class="flow-row" data-g="0"><span class="fl">超大单</span><span class="fb"><i></i></span><span class="fv">--</span></div>
+              <div class="flow-row" data-g="1"><span class="fl">大单</span><span class="fb"><i></i></span><span class="fv">--</span></div>
+              <div class="flow-row" data-g="2"><span class="fl">中单</span><span class="fb"><i></i></span><span class="fv">--</span></div>
+              <div class="flow-row" data-g="3"><span class="fl">小单</span><span class="fb"><i></i></span><span class="fv">--</span></div>
+            </div>
+            <div class="card-foot"><span>主力 = 超大单 + 大单</span><span id="flowMain">--</span></div>
+          </div>
+          <div class="pane-card">
+            <div class="card-title">怎么读</div>
+            <div class="card-text" id="flowNote">四档按频段切分：超低频 0–25%、低频 25–50%、中频 50–75%、高频 75–100%。红=当前占比高于全曲均值，绿=低于均值。</div>
+          </div>
+        </section>
+
+        <section class="rp-pane" id="paneVisual">
+          <div class="pane-card" id="musicSettings">
+            <div class="card-title">主图 K 线</div>
+            <div class="setting-row">
+              <label>横轴</label>
+              <div class="chip-group" id="axisChips">
+                <button data-axis="time" class="active">时间轴（一根=一段时长）</button>
+                <button data-axis="freq">频率轴（一根=一个频段）</button>
+              </div>
+            </div>
+            <div class="setting-row">
+              <label>主图显示</label>
+              <div class="chip-group" id="typeChips">
+                <button data-type="candle">蜡烛</button>
+                <button data-type="hollow" class="active">空心</button>
+                <button data-type="ohlc">美国线</button>
+                <button data-type="line">收盘线</button>
+                <button data-type="area">面积</button>
+                <button data-type="timeline">分时</button>
+              </div>
+            </div>
+            <div class="setting-row">
+              <label>K线间距 <span id="gapVal">0.72</span> <input class="num" id="gapNum" type="number" min="0.2" max="0.95" step="0.01" value="0.72"></label>
+              <input class="range" type="range" id="gapRange" min="0.25" max="0.95" step="0.01" value="0.72">
+            </div>
+            <div class="setting-row">
+              <label>左声道副图</label>
+              <div class="chip-group" id="specLChips">
+                <button data-st="candle" class="active">K线</button>
+                <button data-st="heat">热力谱</button>
+                <button data-st="bar">柱状谱</button>
+                <button data-st="line">折线谱</button>
+              </div>
+            </div>
+            <div class="setting-row">
+              <label>右声道副图</label>
+              <div class="chip-group" id="specRChips">
+                <button data-st="candle" class="active">K线</button>
+                <button data-st="heat">热力谱</button>
+                <button data-st="bar">柱状谱</button>
+                <button data-st="line">折线谱</button>
+              </div>
+            </div>
+            <div class="setting-tip">三块图各自独立设置；把鼠标放到图之间的分隔线上可拖动调高度。</div>
+            <div class="card-title" style="margin-top:10px">可视化设置</div>
+            <div class="setting-row">
+              <label>K线窗口 <input class="num" id="winNum" type="number" min="0.05" max="20" step="0.05" value="0.25"></label>
+              <div class="chip-group" id="windowChips"></div>
+            </div>
+            <div class="setting-row">
+              <label>粗线均窗</label>
+              <div class="chip-group" id="thickChips"></div>
+            </div>
+            <div class="setting-row">
+              <label>细线峰窗</label>
+              <div class="chip-group" id="thinChips"></div>
+            </div>
+            <div class="setting-row">
+              <label>谱线数 <input class="num" id="bandNum" type="number" min="48" max="512" step="8" value="256"></label>
+              <div class="chip-group" id="bandChips"></div>
+            </div>
+            <div class="setting-row">
+              <label>视图跨度 <input class="num" id="viewNum" type="number" min="3" max="900" step="1" value="30"></label>
+              <div class="chip-group" id="viewChips"></div>
+            </div>
+            <div class="setting-row">
+              <label>字幕 <span id="subName">未加载</span></label>
+              <div class="chip-group" id="subChips">
+                <button data-subact="ai">AI 逐字听写</button>
+                <button data-subact="import">导入 LRC/SRT</button>
+                <button data-subact="minus">-0.5s</button>
+                <button data-subact="plus">+0.5s</button>
+                <button data-subact="export">导出LRC</button>
+                <button data-subact="clear">清除</button>
+              </div>
+            </div>
+            <div class="setting-row">
+              <label>字幕轨</label>
+              <div class="chip-group"><select class="num" id="subTrackSel"></select><button class="mini-btn" id="btnSubTrackDel">删除</button></div>
+            </div>
+            <div class="setting-row">
+              <label>进度条</label>
+              <div class="chip-group">
+                <button class="mini-btn active" id="btnSnapBars">吸附K线</button>
+                <button class="mini-btn active" id="btnShowStrip">显示K线</button>
+              </div>
+            </div>
+            <div class="setting-row">
+              <label>字幕显示</label>
+              <div class="chip-group" id="subViewChips">
+                <button data-subview="auto">自动</button>
+                <button data-subview="dock">内嵌</button>
+                <button data-subview="float">悬浮</button>
+              </div>
+            </div>
+            <div class="setting-row">
+              <label>平滑 <span id="smoothVal">0.30</span></label>
+              <input class="range" type="range" id="smoothRange" min="0" max="0.9" step="0.05" value="0.3">
+            </div>
+            <div class="setting-row">
+              <label>布林带 N / 倍数</label>
+              <div class="chip-group">
+                <input class="num" id="bollN" type="number" min="5" max="120" step="1" value="20" title="周期 N">
+                <input class="num" id="bollK" type="number" min="0.5" max="3" step="0.1" value="2" title="标准差倍数 K">
+              </div>
+            </div>
+            <div class="setting-row">
+              <label>节拍 BPM / 相位</label>
+              <div class="chip-group">
+                <input class="num" id="bpmNum" type="number" min="0" max="240" step="0.1" value="0" title="0 = 自动检测">
+                <input class="num" id="beatPhaseNum" type="number" min="-500" max="500" step="5" value="0" title="相位微调（毫秒）">
+                <button class="mini-btn" id="btnBeatReset">自动</button>
+              </div>
+            </div>
+            <div class="setting-row">
+              <label>音量 <span id="volVal">80%</span></label>
+              <input class="range" type="range" id="volRange" min="0" max="1" step="0.01" value="0.8">
+            </div>
+            <div class="setting-row">
+              <label>重新生成</label>
+              <button class="mini-btn" id="btnReanalyze">重新分析音频</button>
+            </div>
+            <div class="setting-tip" id="musicTip">主图频率；粗/细线可调；左/右声道各自 200+ 线滚动频谱；红绿=该声道最大音量趋势。</div>
+          </div>
+          <div class="pane-card" id="styleSettings">
+            <div class="card-title">外观与图层</div>
+            <div class="setting-row">
+              <label>主题</label>
+              <div class="chip-group" id="themeChips">
+                <button data-theme="light">浅色</button>
+                <button data-theme="dark">深色</button>
+              </div>
+            </div>
+            <div class="setting-row">
+              <label>涨跌配色</label>
+              <div class="chip-group" id="upDownChips">
+                <button data-updown="red">红涨绿跌</button>
+                <button data-updown="green">绿涨红跌</button>
+              </div>
+            </div>
+            <div class="setting-row">
+              <label>界面密度</label>
+              <div class="chip-group" id="densityChips">
+                <button data-density="standard">标准</button>
+                <button data-density="compact">紧凑</button>
+              </div>
+            </div>
+            <div class="setting-row">
+              <label>海报倍率</label>
+              <div class="chip-group" id="shareChips"></div>
+            </div>
+            <div class="setting-row">
+              <label>频谱横轴</label>
+              <div class="chip-group" id="freqScaleChips">
+                <button data-fscale="log">对数</button>
+                <button data-fscale="linear">线性</button>
+              </div>
+            </div>
+            <div class="setting-row">
+              <label>频谱强度</label>
+              <div class="chip-group" id="ampScaleChips">
+                <button data-ascale="linear">线性</button>
+                <button data-ascale="db">对数(dB)</button>
+              </div>
+            </div>
+            <div class="setting-row">
+              <label>频谱亮度 <span id="heatVal">1.00</span></label>
+              <input class="range" type="range" id="heatRange" min="0.6" max="1.6" step="0.05" value="1">
+            </div>
+            <div class="setting-row">
+              <label>画面层透明 <span id="vidVal">50%</span></label>
+              <input class="range" type="range" id="vidRange" min="0" max="1" step="0.05" value="0.5">
+            </div>
+            <div class="setting-row">
+              <label>画面适配</label>
+              <div class="chip-group" id="fitChips">
+                <button data-fit="cover" class="active">铺满裁切</button>
+                <button data-fit="contain">完整显示</button>
+                <button data-fit="fill">拉伸铺满</button>
+              </div>
+            </div>
+            <div class="setting-row">
+              <label>画面位置</label>
+              <div class="chip-group" id="paneChips">
+                <button data-pane="bg" class="active">背景</button>
+                <button data-pane="corner">小窗</button>
+              </div>
+            </div>
+            <div class="setting-row">
+              <label>画面缩放 <span id="vscVal">1.00</span></label>
+              <input class="range" type="range" id="vscRange" min="0.6" max="1.6" step="0.05" value="1">
+            </div>
+            <div class="setting-row">
+              <label>画面滤镜</label>
+              <div class="chip-group" id="vfilterChips">
+                <button data-vf="none" class="active">无</button>
+                <button data-vf="blur">模糊</button>
+                <button data-vf="gray">黑白</button>
+                <button data-vf="warm">暖色</button>
+              </div>
+            </div>
+            <div class="setting-row">
+              <label>视频操作</label>
+              <div class="chip-group">
+                <button class="mini-btn" id="btnVidFlip">镜像</button>
+                <button class="mini-btn" id="btnVidPip">画中画</button>
+                <button class="mini-btn" id="btnVidPrev">← 帧</button>
+                <button class="mini-btn" id="btnVidNext">帧 →</button>
+              </div>
+            </div>
+            <div class="setting-row">
+              <label>独立播放</label>
+              <div class="chip-group">
+                <button class="mini-btn" id="btnVidFree" title="视频不再跟随音频">独立</button>
+                <select class="num" id="vidRate"><option>0.5</option><option>0.75</option><option selected>1</option><option>1.25</option><option>1.5</option><option>2</option></select>
+                <button class="mini-btn" id="btnVidPlay">播放</button>
+                <button class="mini-btn" id="btnVidA">A</button>
+                <button class="mini-btn" id="btnVidB">B</button>
+                <button class="mini-btn" id="btnVidNextClip">下一段</button>
+              </div>
+            </div>
+            <div class="check-list" id="layerChecks">
+              <label><input type="checkbox" id="chkSubs" checked> 字幕</label>
+              <label><input type="checkbox" id="chkVideo"> 视频画面作背景（导入视频时）</label>
+              <label><input type="checkbox" id="chkWall"> 3D 行情墙（纵深面板）</label>
+              <label><input type="checkbox" id="chkBeat" checked> 节拍网格</label>
+              <label><input type="checkbox" id="chkWatermark" checked> 窗内高低水位线</label>
+              <label><input type="checkbox" id="chkEnvelope" checked> 声道响度包络</label>
+              <label><input type="checkbox" id="chkGlow" checked> 高亮发光（深色主题）</label>
+            </div>
+          </div>
+          <div class="pane-card" id="fftSettings" hidden>
+            <div class="card-title">分析参数</div>
+            <div class="setting-row">
+              <label>FFT 窗长</label>
+              <div class="chip-group" id="fftChips"></div>
+            </div>
+            <div class="setting-row">
+              <label>分析步长</label>
+              <div class="chip-group" id="hopChips"></div>
+            </div>
+            <div class="setting-row">
+              <label>频段范围</label>
+              <div class="chip-group" id="rangeChips"></div>
+            </div>
+            <div class="setting-tip">改动会对当前音频重新分析（分片执行，进度见「音频统计 · 分析」）。窗长越大频率分辨率越高、耗时越长。</div>
+          </div>
+          <div class="pane-card" id="marketSettings" hidden>
+            <div class="card-title">K线显示</div>
+            <div class="setting-tip">当前是 K 线示例片源。导入音频后，这里会变成可视化设置。</div>
+          </div>
+          <div class="pane-card" id="analyzerCard">
+            <div class="card-title">电平表<span class="ac-badge">L / R / MASTER</span></div>
+            <div class="meter-row" data-ch="L">
+              <span class="ch-tag">L</span>
+              <div class="meter-track"><i class="meter-fill"></i><b class="meter-peak"></b><em class="meter-scale"></em></div>
+              <span class="meter-val">--</span>
+            </div>
+            <div class="meter-row" data-ch="R">
+              <span class="ch-tag">R</span>
+              <div class="meter-track"><i class="meter-fill"></i><b class="meter-peak"></b><em class="meter-scale"></em></div>
+              <span class="meter-val">--</span>
+            </div>
+            <div class="meter-row" data-ch="M">
+              <span class="ch-tag">M</span>
+              <div class="meter-track"><i class="meter-fill"></i><b class="meter-peak"></b><em class="meter-scale"></em></div>
+              <span class="meter-val">--</span>
+            </div>
+            <table class="data-grid ac-grid">
+              <tr><td>谱心</td><td id="acCentroid">--</td></tr>
+              <tr><td>瞬态</td><td id="acTrans">--</td></tr>
+              <tr><td>左右互相关</td><td id="acCorr">--</td></tr>
+              <tr><td>峰值保持</td><td id="acPeak">--</td></tr>
+              <tr><td>A-B 区间</td><td id="acRange">未选</td></tr>
+              <tr><td>区间均频</td><td id="acRangeFreq">--</td></tr>
+              <tr><td>区间最大音量</td><td id="acRangeVol">--</td></tr>
+            </table>
+            <div class="setting-tip">Shift+拖拽波形选 A-B 区间并循环；点「清除区间」取消。</div>
+          </div>
+          <div class="pane-card">
+            <div class="card-title">音频统计</div>
+            <table class="data-grid">
+              <tr><td>BPM</td><td id="mBpm">--</td></tr>
+              <tr><td>时长</td><td id="mDuration">--</td></tr>
+              <tr><td>采样率</td><td id="mSampleRate">--</td></tr>
+              <tr><td>声道</td><td id="mChannels">--</td></tr>
+              <tr><td id="lblFrames">K线数</td><td id="mFrames">--</td></tr>
+              <tr><td id="lblWindow">采样窗口</td><td id="mWindow">--</td></tr>
+              <tr><td id="lblBands">谱线 L/R</td><td id="mBands">--</td></tr>
+              <tr><td>分析</td><td id="mAnalyze">就绪</td></tr>
+            </table>
+          </div>
+        </section>
+
+        <section class="rp-pane" id="paneBook">
+          <div class="pane-card book-card">
+            <div class="card-title"><span id="bookTitle">频段盘口</span><span class="ac-badge" id="bookBadge">能量 / 峰值线</span></div>
+            <div class="book-head"><span id="bkH1">档位</span><span id="bkH2">能量</span><span id="bkH3">当前</span></div>
+            <div id="bookRows"></div>
+            <div class="book-depth" id="bookDepth" title="五档能量占比（深度）">
+              <i></i><i></i><i></i><i></i><i></i>
+            </div>
+            <div class="book-sum" id="bookSum">--</div>
+          </div>
+          <div class="pane-card">
+            <div class="card-title"><span id="tickTitle">逐帧明细</span><span class="ac-badge" id="tickBadge">最近 24 帧</span></div>
+            <div class="tick-head"><span id="tkH1">时间</span><span id="tkH2">频率</span><span id="tkH3">音量</span><span id="tkH4">方向</span></div>
+            <div class="tick-list" id="tickList"></div>
+          </div>
+        </section>
+        <section class="rp-pane" id="paneChapters">
+          <div class="chapter-head">
+            <span>段落 / 节拍</span>
+            <span id="chapterCount">0</span>
+          </div>
+          <div class="chapter-list" id="chapterList"></div>
+        </section>
+      </div>
+    </aside>
+
+  </div>
+
+      <section class="sub-dock" id="subDock" hidden>
+        <div class="sd-head">
+          <span class="sd-title">字幕</span>
+          <span class="sd-name" id="subDockName">未加载</span>
+          <span class="sd-count" id="subDockCount">--</span>
+          <button class="sd-btn" id="btnSubDockView" title="自动：前台内嵌 / 失焦悬浮">模式·自动</button>
+          <button class="sd-btn" id="btnSubDockCanvas" title="同时在画面内显示（导出/录屏用）">画面内</button>
+          <button class="sd-btn" id="btnSubDockFold" title="收起 / 展开字幕区">收起</button>
+        </div>
+        <div class="sd-body">
+          <div class="sd-line sd-prev" id="sdPrev"></div>
+          <div class="sd-line sd-cur" id="sdCur"><span class="sd-empty">未加载字幕 · 导入 LRC / SRT，或用 AI 逐字听写</span></div>
+          <div class="sd-line sd-next" id="sdNext"></div>
+        </div>
+      </section>
+  <div class="replaybar">
+    <div class="replay-controls">
+      <button class="rb-btn" id="rbStart" title="回到开头">⏮</button>
+      <button class="rb-btn" id="rbStepBack" title="上一根 (←)">◀</button>
+      <button class="rb-play" id="rbPlay" title="播放/暂停 (Space)">▶</button>
+      <button class="rb-btn" id="rbStepFwd" title="下一根 (→)">▶|</button>
+      <button class="rb-btn" id="rbEnd" title="跳到结尾">⏭</button>
+      <select class="rb-speed" id="rbSpeed">
+        <option value="0.5">0.5x</option>
+        <option value="0.75">0.75x</option>
+        <option value="1" selected>1x</option>
+        <option value="1.25">1.25x</option>
+        <option value="1.5">1.5x</option>
+        <option value="2">2x</option>
+      </select>
+    </div>
+    <span class="tl-time" id="tlTimeCur">0:00</span>
+    <div class="timeline" id="timeline">
+      <canvas class="tl-wave" id="tlWave"></canvas>
+      <div class="tl-region" id="tlRegion" hidden></div>
+      <div class="tl-track" id="tlTrack">
+        <div class="tl-fill" id="tlFill"></div>
+        <div class="tl-marks" id="tlMarks"></div>
+        <div class="tl-thumb" id="tlThumb"></div>
+      </div>
+      <div class="tl-tip" id="tlTip">--</div>
+      <button class="tl-ab-clear" id="btnABClear" hidden>清除区间</button>
+    </div>
+    <span class="tl-time" id="tlTimeAll">0:00</span>
+    <div class="replay-extra">
+      <button class="rb-btn" id="rbBack10" title="后退 10 秒">«10s</button>
+      <button class="rb-btn" id="rbFwd10" title="前进 10 秒">10s»</button>
+      <button class="rb-btn" id="rbMute" title="静音">静音</button>
+      <input class="range rb-vol" id="rbVol" type="range" min="0" max="1" step="0.01" value="0.8" title="音量">
+      <button class="rb-btn" id="rbLoop" title="循环模式">循环:关</button>
+    </div>
+    <div class="replay-time">
+      <span id="rbIndex">第 -- / -- 根</span>
+      <span id="rbDate">--</span>
+      <span id="rbPct">0.0%</span>
+    </div>
+  </div>
+
+  <footer class="tickerbar">
+    <div class="ticker" id="ticker"></div>
+    <div class="ticker-right">
+      <span class="status-mode" id="statusMode">播放模式</span>
+      <span id="statusSpeed">1.0x</span>
+      <span id="statusClock">--:--:--</span>
+    </div>
+  </footer>
+
+</div>
+
+<div class="rec-pill" id="recPill" hidden><i></i><span id="recTime">00:00</span><em>停止并保存</em></div>
+<div class="modal-mask" id="modalMask" hidden>
+  <div class="modal" id="modal">
+    <div class="modal-title"><span id="modalTitle">对话框</span><button class="modal-x" id="modalClose">×</button></div>
+    <div class="modal-body" id="modalBody"></div>
+    <div class="modal-actions" id="modalActions"></div>
+  </div>
+</div>
+
+<div class="drop-zone" id="dropZone">
+  <div class="dz-box">
+    <div class="dz-icon">⇩</div>
+    <div class="dz-title">松开导入</div>
+    <div class="dz-sub">音频 / 视频 → 载入曲目 · LRC / SRT / VTT → 字幕 · CSV → K 线数据</div>
+  </div>
+</div>
+<div class="ctx-menu" id="ctxMenu" hidden></div>
+<div class="cmd-palette" id="cmdPalette" hidden>
+  <div class="cp-box">
+    <input class="cp-input" id="cpInput" placeholder="输入命令…" spellcheck="false" autocomplete="off">
+    <div class="cp-list" id="cpList"></div>
+    <div class="cp-foot">↑↓ 选择 · Enter 执行 · Esc 关闭</div>
+  </div>
+</div>
+
+<div class="sub-float" id="subFloat" hidden>
+  <div class="sf-cur" id="sfCur"></div>
+  <div class="sf-next" id="sfNext"></div>
+</div>
+
+<input type="file" id="fileInput" accept="audio/*,video/*,.mp3,.wav,.ogg,.m4a,.flac,.aac,.mp4,.webm,.mov,.csv,text/csv" hidden>
+<input type="file" id="subFile" accept=".lrc,.srt,.vtt,text/plain" hidden>
+
+<script src="vendor/klinecharts.min.js"></script>
+<script src="vendor/three.min.js"></script>
+<script src="data/library.js"></script>
+<script src="data/usdjpy.js"></script>
+<script src="data/eurchf.js"></script>
+<script src="data/gbpjpy.js"></script>
+<script src="data/usdchf.js"></script>
+<script src="data/sh.js"></script>
+<script src="data/hs300.js"></script>
+<script src="data/n225.js"></script>
+<script src="data/ndx.js"></script>
+<script src="data/hsi.js"></script>
+<script src="data/demo-audio.js"></script>
+<script src="data/music-library.js"></script>
+<script src="app.js?v=20261108f"></script>
+</body>
+</html>
