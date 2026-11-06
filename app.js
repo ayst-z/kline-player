@@ -6175,8 +6175,10 @@ function openModal(title, bodyHTML, actions) {
   $('modalMask').hidden = false;
 }
 function closeModal() { $('modalMask').hidden = true; }
+const APP_VERSION = 'beta0.1';
 function showAbout() {
-  openModal('关于', `
+  openModal('关于', `<div style="font:700 12px var(--mono);color:var(--red);letter-spacing:.08em;margin-bottom:10px">K线播放器 '+APP_VERSION+'</div>
+
     <ul class="about-list">
       <li><b>功能</b>音频频率/音量 → K 线 + 滚动频谱 + 逐字字幕</li>
       <li><b>字幕</b>LRC / SRT / VTT 导入，或接本地语音识别逐字点亮</li>

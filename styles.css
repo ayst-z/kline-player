@@ -861,3 +861,5 @@ html[data-stage="3d"] #subDock{background:rgba(8,12,18,.72);}
 
 /* HDR 能力徽标（显示器支持高动态范围时显示） */
 .hdr-badge{padding:3px 7px;border:1px solid var(--red-line);border-radius:3px;background:var(--red-bg);color:var(--red);font:700 10px var(--mono);letter-spacing:.08em;}
+
+.brand-ver{margin-left:8px;padding:2px 6px;border:1px solid var(--red-line);border-radius:3px;background:var(--red-bg);color:var(--red);font:700 9px var(--mono);letter-spacing:.08em;}
