@@ -216,7 +216,7 @@ const state = {
   musicWindow: 0.25, musicThick: 1, musicThin: 10, spectrumBands: 256, spectrumStep: 0.25, viewSpan: 30, musicSmooth: 0.3, musicVolume: 0.8,
   freqThick: [], freqThin: [], spectrumRows: 200, spectrumL: [], spectrumR: [], meters: { L: { v: 0, p: 0, pt: 0 }, R: { v: 0, p: 0, pt: 0 }, M: { v: 0, p: 0, pt: 0 } }, freqScale: null, lastMusicDraw: 0, mCanvas: null,
   musicAudio: null, musicAudioMeta: null, loadToken: 0, analysisWorker: undefined,
-  videoEl: null, videoOn: true, videoAlpha: 0.5, videoFit: 'cover', videoPane: 'bg', videoScale: 1, videoFlipX: false, videoFilter: 'none', videoFree: false, videoRate: 1, videoAB: { a: null, b: null }, snapBars: true, showStrip: true, wall3d: false, wall3dAlpha: 0.9, stageMode: 'normal',
+  videoEl: null, videoOn: true, videoAlpha: 0.5, videoFit: 'cover', videoPane: 'bg', videoScale: 1, videoFlipX: false, videoFilter: 'none', videoFree: false, videoRate: 1, videoAB: { a: null, b: null }, snapBars: true, showStrip: true, normPeak: false, freqOverride: false, freqMin: 40, freqMax: 12000, wall3d: false, wall3dAlpha: 0.9, stageMode: 'normal',
   mediaSource: null, mediaDest: null, mediaAC: null,
   musicHover: null, plotGeom: null, scrub: false,
   subs: [], subOffset: 0, showSubs: true, subIdx: -2, subDockFold: false, subView: 'auto',
@@ -1146,9 +1146,10 @@ function createFrameProcessor(buffer, opts) {
       return { t: start / sr, freq, freqL: l.freq, freqR: r.freq, bands, bandsL: l.bands, bandsR: r.bands, rms, rmsL: l.rms, rmsR: r.rms };
     },
     finish(frames, smooth) {
-      normalizeField(frames, 'rms');
-      normalizeField(frames, 'rmsL');
-      normalizeField(frames, 'rmsR');
+      const np = o.normPeak ? 1 : 0.98;
+      normalizeField(frames, 'rms', np);
+      normalizeField(frames, 'rmsL', np);
+      normalizeField(frames, 'rmsR', np);
       for (const f of frames) f.rawRms = f.rms;
       smoothField(frames, 'rms', smooth);
       smoothField(frames, 'rmsL', smooth);
@@ -1329,8 +1330,8 @@ async function runAnalysisWorker(buffer, opts) {
 }
 async function runAnalysis(buffer) {
   setAnalyzeProgress(0);
-  const range = BAND_RANGES[state.bandRange] || BAND_RANGES[1];
-  const opts = { N: state.fftSize, hopSec: state.hopSec, fMin: range[0], fMax: range[1] };
+  const range = state.freqOverride ? [state.freqMin, state.freqMax] : (BAND_RANGES[state.bandRange] || BAND_RANGES[1]);
+  const opts = { N: state.fftSize, hopSec: state.hopSec, fMin: range[0], fMax: range[1], normPeak: state.normPeak };
   try {
     try {
       const a = await runAnalysisWorker(buffer, opts);
@@ -3464,7 +3465,34 @@ function ensureMusicVideo(meta) {
   v.style.cssText = 'position:absolute;width:2px;height:2px;opacity:0;pointer-events:none;';
   if (box) box.appendChild(v);
   state.videoEl = v;
+  v.addEventListener('loadeddata', () => {
+    try {
+      const cv = document.createElement('canvas');
+      cv.width = 160; cv.height = 90;
+      const c = cv.getContext('2d');
+      const grab = () => { try { c.drawImage(v, 0, 0, 160, 90); meta.thumb = cv.toDataURL('image/jpeg', 0.6); renderClips(); } catch (e) {} };
+      v.addEventListener('seeked', grab, { once: true });
+      try { v.currentTime = Math.min(1, (v.duration || 2) * 0.1); } catch (e) {}
+    } catch (e) {}
+  }, { once: true });
   return v;
+}
+function renderClips() {
+  const box = $('clipList');
+  if (!box) return;
+  const items = LIBRARY.filter(m => m.videoUrl);
+  box.innerHTML = '';
+  items.forEach(m => {
+    const d = document.createElement('div');
+    d.className = 'clip' + (state.meta && state.meta.id === m.id ? ' on' : '');
+    const img = document.createElement('img');
+    if (m.thumb) img.src = m.thumb;
+    const sp = document.createElement('span');
+    sp.textContent = m.name;
+    d.appendChild(img); d.appendChild(sp);
+    d.addEventListener('click', () => loadDataset(m.id));
+    box.appendChild(d);
+  });
 }
 function videoReady() {
   const v = state.videoEl;
@@ -4920,6 +4948,17 @@ function bindStylePanel() {
     }
     toast('列表里没有其它视频');
   });
+  on('btnFreqApply', 'click', async () => {
+    const a = clamp(Number($('fminNum').value) || 40, 20, 2000);
+    const b = clamp(Number($('fmaxNum').value) || 12000, Math.max(a + 500, 2000), 20000);
+    state.freqMin = a; state.freqMax = b; state.freqOverride = true;
+    toast('重分析：' + a + '–' + b + ' Hz');
+    await reanalyzeCurrent();
+  });
+  on('chkNormPeak', 'change', async e => {
+    state.normPeak = !!e.target.checked;
+    await reanalyzeCurrent();
+  });
   on('btnSnapBars', 'click', () => {
     state.snapBars = !state.snapBars;
     $('btnSnapBars').classList.toggle('active', state.snapBars);
@@ -4929,6 +4968,16 @@ function bindStylePanel() {
     state.showStrip = !state.showStrip;
     $('btnShowStrip').classList.toggle('active', state.showStrip);
     drawWaveStrip(); saveSettings();
+  });
+  on('btnSubTrackRename', 'click', () => {
+    const sel = $('subTrackSel');
+    const i = Number(sel && sel.value);
+    if (!subTracks[i]) { toast('没有可重命名的字幕轨'); return; }
+    const name = prompt('字幕轨名称', subTracks[i].name);
+    if (!name) return;
+    subTracks[i].name = name.slice(0, 24);
+    if (subTracks[i].list === state.subs) { state.subLabel = subTracks[i].name; syncSubLabel(); }
+    renderSubTracks(); saveSettings();
   });
   on('btnSubTrackDel', 'click', () => {
     const sel = $('subTrackSel');
@@ -6098,6 +6147,10 @@ function loadSettings() {
     if (['candle', 'heat', 'bar', 'line'].includes(s.specTypeR)) state.specTypeR = s.specTypeR;
     if (typeof s.videoAlpha === 'number') state.videoAlpha = clamp(s.videoAlpha, 0, 1);
     if (typeof s.snapBars === 'boolean') state.snapBars = s.snapBars;
+    if (typeof s.normPeak === 'boolean') state.normPeak = s.normPeak;
+    if (typeof s.freqOverride === 'boolean') state.freqOverride = s.freqOverride;
+    if (typeof s.freqMin === 'number') state.freqMin = s.freqMin;
+    if (typeof s.freqMax === 'number') state.freqMax = s.freqMax;
     if (typeof s.showStrip === 'boolean') state.showStrip = s.showStrip;
     if (s.videoPane === 'bg' || s.videoPane === 'corner') state.videoPane = s.videoPane;
     if (typeof s.videoScale === 'number') state.videoScale = clamp(s.videoScale, 0.5, 2);
@@ -6138,7 +6191,7 @@ function saveSettings() {
       showBeat: state.showBeat, showWatermark: state.showWatermark, showEnvelope: state.showEnvelope, showGlow: state.showGlow, hollow: state.hollow, ma: state.showMA, vol: state.showVOL, macd: state.showMACD, highLow: state.showHighLow,
       showEMA: state.showEMA, showBoll: state.showBoll, bollN: state.bollN, bollK: state.bollK,
       bpmOverride: state.bpmOverride, beatPhaseAdj: state.beatPhaseAdj,
-      snapBars: state.snapBars, showStrip: state.showStrip, videoOn: state.videoOn, videoAlpha: state.videoAlpha, videoFit: state.videoFit, videoPane: state.videoPane, videoScale: state.videoScale, videoFlipX: state.videoFlipX, videoFilter: state.videoFilter, wall3d: state.wall3d, stage: state.stageMode,
+      snapBars: state.snapBars, showStrip: state.showStrip, normPeak: state.normPeak, freqOverride: state.freqOverride, freqMin: state.freqMin, freqMax: state.freqMax, videoOn: state.videoOn, videoAlpha: state.videoAlpha, videoFit: state.videoFit, videoPane: state.videoPane, videoScale: state.videoScale, videoFlipX: state.videoFlipX, videoFilter: state.videoFilter, wall3d: state.wall3d, stage: state.stageMode,
       showSubs: state.showSubs, subDockFold: state.subDockFold, subView: state.subView, subOffset: state.subOffset,
       loopMode: state.loopMode, muted: state.muted, lastVol: state.lastVol,
       kMode: state.kMode, freqAgg: state.freqAgg, chartType: state.chartType, barGap: state.barGap,
@@ -6762,6 +6815,7 @@ function bindEvents() {
     if (window.THREE && THREE.SRGBColorSpace) { /* 3D 输出按 sRGB 渲染，HDR 由离线管线完成 */ }
   } catch (e) {}
   initRealQuote();
+  renderClips();
   setStageMode(state.stageMode);
   document.addEventListener('visibilitychange', () => updateSubDock(true));
   on('btnSubDockView', 'click', () => {
@@ -7330,6 +7384,9 @@ function setSound(v) {
   ['btnSoundTop', 'trSound'].forEach(id => { const el = $(id); if (el) el.classList.toggle('active', state.sound); });
   { const el = $('btnSonifyTop'); if (el) el.classList.toggle('active', !!state.sonify); }
   { const el = $('btnReplayTop'); if (el) el.classList.toggle('active', !!state.marketReplay); }
+  { const el = $('chkNormPeak'); if (el) el.checked = !!state.normPeak; }
+  { const el = $('fminNum'); if (el) el.value = state.freqMin; }
+  { const el = $('fmaxNum'); if (el) el.value = state.freqMax; }
   if (state.sound) AudioFX.ensure();
   saveSettings();
 }

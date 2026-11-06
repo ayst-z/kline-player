@@ -433,7 +433,7 @@ window.addEventListener('error', function (e) {
             </div>
             <div class="setting-row">
               <label>字幕轨</label>
-              <div class="chip-group"><select class="num" id="subTrackSel"></select><button class="mini-btn" id="btnSubTrackDel">删除</button></div>
+              <div class="chip-group"><select class="num" id="subTrackSel"></select><button class="mini-btn" id="btnSubTrackRename">重命名</button><button class="mini-btn" id="btnSubTrackDel">删除</button></div>
             </div>
             <div class="setting-row">
               <label>进度条</label>
@@ -576,6 +576,7 @@ window.addEventListener('error', function (e) {
                 <button class="mini-btn" id="btnVidNextClip">下一段</button>
               </div>
             </div>
+            <div class="clip-list" id="clipList"></div>
             <div class="check-list" id="layerChecks">
               <label><input type="checkbox" id="chkSubs" checked> 字幕</label>
               <label><input type="checkbox" id="chkVideo"> 视频画面作背景（导入视频时）</label>
@@ -599,6 +600,20 @@ window.addEventListener('error', function (e) {
             <div class="setting-row">
               <label>频段范围</label>
               <div class="chip-group" id="rangeChips"></div>
+            </div>
+            <div class="setting-row">
+              <label>频率下限 / 上限</label>
+              <div class="chip-group">
+                <input class="num" id="fminNum" type="number" min="20" max="2000" step="10" value="40">
+                <input class="num" id="fmaxNum" type="number" min="2000" max="20000" step="500" value="12000">
+                <button class="mini-btn" id="btnFreqApply">应用并重分析</button>
+              </div>
+            </div>
+            <div class="setting-row">
+              <label>归一化</label>
+              <div class="chip-group">
+                <label style="font:11px var(--ui);color:var(--text-2)"><input type="checkbox" id="chkNormPeak"> 按峰值（默认 98 分位）</label>
+              </div>
             </div>
             <div class="setting-tip">改动会对当前音频重新分析（分片执行，进度见「音频统计 · 分析」）。窗长越大频率分辨率越高、耗时越长。</div>
           </div>
@@ -793,6 +808,6 @@ window.addEventListener('error', function (e) {
 <script src="data/hsi.js"></script>
 <script src="data/demo-audio.js"></script>
 <script src="data/music-library.js"></script>
-<script src="app.js?v=20261108g"></script>
+<script src="app.js?v=20261108i"></script>
 </body>
 </html>

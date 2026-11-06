@@ -863,3 +863,11 @@ html[data-stage="3d"] #subDock{background:rgba(8,12,18,.72);}
 .hdr-badge{padding:3px 7px;border:1px solid var(--red-line);border-radius:3px;background:var(--red-bg);color:var(--red);font:700 10px var(--mono);letter-spacing:.08em;}
 
 .brand-ver{margin-left:8px;padding:2px 6px;border:1px solid var(--red-line);border-radius:3px;background:var(--red-bg);color:var(--red);font:700 9px var(--mono);letter-spacing:.08em;}
+
+/* 视频缩略图列表 */
+.clip-list{display:flex;gap:6px;overflow-x:auto;padding:2px 0 6px;}
+.clip-list .clip{flex:0 0 auto;width:104px;border:1px solid var(--line);border-radius:4px;background:var(--panel-2);cursor:pointer;overflow:hidden;text-align:left;}
+.clip-list .clip:hover{border-color:var(--red);}
+.clip-list .clip.on{border-color:var(--red);box-shadow:0 0 0 1px var(--red-line);}
+.clip-list img{display:block;width:100%;height:58px;object-fit:cover;background:#000;}
+.clip-list span{display:block;padding:3px 5px;font:10px var(--ui);color:var(--text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
