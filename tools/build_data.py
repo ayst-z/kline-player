@@ -2,7 +2,7 @@
 """Build compact JS data modules from Eastmoney daily kline JSON."""
 import json, os, math, datetime, hashlib
 
-RAW = r"C:/tmp/kline_raw"
+RAW = os.environ.get("KLINE_RAW_DIR") or os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "_raw")
 OUT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
 
 DATASETS = [

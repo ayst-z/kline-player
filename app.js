@@ -2,6 +2,21 @@
 'use strict';
 
 const $ = id => document.getElementById(id);
+/* 高频路径的 DOM 写入守门：只在值变化时落 DOM，避免每帧重复解析/重排 */
+const setText = (el, v) => { if (el && el.textContent !== v) el.textContent = v; };
+const setHTML = (el, v) => { if (el && el.__h !== v) { el.__h = v; el.innerHTML = v; } };
+const setVal = (el, v) => { if (el && el.value !== String(v)) el.value = v; };
+const setCss = (el, prop, v) => {
+  if (!el) return;
+  const c = el.__css || (el.__css = {});
+  if (c[prop] !== v) { c[prop] = v; el.style[prop] = v; }
+};
+/* series 按 [6]=起始秒 升序；返回首个 c[6] >= t 的下标 */
+const idxAt = (series, t) => {
+  let lo = 0, hi = series.length;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (series[mid][6] < t) lo = mid + 1; else hi = mid; }
+  return lo;
+};
 const DATA = window.KLINE_DATA || {};
 const LIBRARY = (window.KLINE_LIBRARY || []).slice();
 const MUSIC = (window.KLINE_MUSIC || []).slice();
@@ -488,6 +503,7 @@ function paintSubWords(el, line, live, tt) {
   }
 }
 /* 前台=内嵌字幕区；失焦/后台=悬浮条（将来的 EXE 小窗沿用同一套） */
+let subDockChrome = '';
 function updateSubDock(force) {
   const dock = $('subDock');
   if (!dock) return;
@@ -496,17 +512,23 @@ function updateSubDock(force) {
   const show = state.mode === 'music' && subs.length > 0;
   const showDock = show && mode === 'dock';
   const showFloat = show && mode === 'float';
-  if (dock.hidden === showDock) dock.hidden = !showDock;
-  dock.classList.toggle('folded', !!state.subDockFold);
-  const fl = $('subFloat');
-  if (fl && fl.hidden === showFloat) fl.hidden = !showFloat;
-  const canvasBtn = $('btnSubDockCanvas');
-  if (canvasBtn) canvasBtn.classList.toggle('active', !!state.showSubs);
-  const foldBtn = $('btnSubDockFold');
-  if (foldBtn) foldBtn.textContent = state.subDockFold ? '展开' : '收起';
-  const vmBtn = $('btnSubDockView');
-  if (vmBtn) vmBtn.textContent = state.subView === 'auto' ? '模式·自动' : state.subView === 'dock' ? '模式·内嵌' : '模式·悬浮';
-  syncSubViewChips();
+  /* 外壳状态只在模式/折叠/字幕轨变化时重写；逐帧只更新当前句与逐字高亮 */
+  const chrome = [showDock, showFloat, state.subDockFold ? 1 : 0, state.subView, state.showSubs ? 1 : 0, state.subLabel || '', state.subOffset || 0, subs.length].join('|');
+  if (chrome !== subDockChrome) {
+    subDockChrome = chrome;
+    if (dock.hidden === showDock) dock.hidden = !showDock;
+    dock.classList.toggle('folded', !!state.subDockFold);
+    const fl = $('subFloat');
+    if (fl && fl.hidden === showFloat) fl.hidden = !showFloat;
+    const canvasBtn = $('btnSubDockCanvas');
+    if (canvasBtn) canvasBtn.classList.toggle('active', !!state.showSubs);
+    const foldBtn = $('btnSubDockFold');
+    if (foldBtn) foldBtn.textContent = state.subDockFold ? '展开' : '收起';
+    const vmBtn = $('btnSubDockView');
+    if (vmBtn) vmBtn.textContent = state.subView === 'auto' ? '模式·自动' : state.subView === 'dock' ? '模式·内嵌' : '模式·悬浮';
+    syncSubViewChips();
+    setText($('subDockName'), state.subLabel || (subs.length + ' 条'));
+  }
   if (!show) return;
   const t = state.musicAudio ? state.musicAudio.currentTime : 0;
   const tt = t - (state.subOffset || 0);
@@ -514,17 +536,15 @@ function updateSubDock(force) {
   const live = idx >= 0 && tt < subs[idx].end;
   const line = idx >= 0 ? subs[idx] : subs[0];
   if (showDock) {
-    $('subDockName').textContent = state.subLabel || (subs.length + ' 条');
-    $('subDockCount').textContent = (idx < 0 ? '--' : (idx + 1) + '/' + subs.length)
-      + (state.subOffset ? ' · ' + (state.subOffset > 0 ? '+' : '') + state.subOffset.toFixed(1) + 's' : '');
-    $('sdPrev').textContent = idx > 0 ? subs[idx - 1].text : '';
-    $('sdNext').textContent = idx + 1 < subs.length ? subs[idx + 1].text : '';
+    setText($('subDockCount'), (idx < 0 ? '--' : (idx + 1) + '/' + subs.length)
+      + (state.subOffset ? ' · ' + (state.subOffset > 0 ? '+' : '') + state.subOffset.toFixed(1) + 's' : ''));
+    setText($('sdPrev'), idx > 0 ? subs[idx - 1].text : '');
+    setText($('sdNext'), idx + 1 < subs.length ? subs[idx + 1].text : '');
     paintSubWords($('sdCur'), line, live, tt);
   }
   if (showFloat) {
     paintSubWords($('sfCur'), line, live, tt);
-    const nx = $('sfNext');
-    if (nx) nx.textContent = idx + 1 < subs.length ? subs[idx + 1].text : '';
+    setText($('sfNext'), idx + 1 < subs.length ? subs[idx + 1].text : '');
   }
 }
 function seekMusicTo(t) {
@@ -1776,8 +1796,11 @@ function drawChannelCandles(ctx, pw, y, h, now, start, span, series, ch) {
   if (!series || !series.length) return;
   const t = T();
   if (!state.chScale) state.chScale = { L: { min: 0, max: 0 }, R: { min: 0, max: 0 } };
+  const i0 = Math.max(0, idxAt(series, start - span * 0.3) - 1);
+  const i1 = Math.min(series.length, idxAt(series, now + 0.001));
   let vmin = Infinity, vmax = -Infinity;
-  for (const c of series) {
+  for (let i = i0; i < i1; i++) {
+    const c = series[i];
     if (c[6] > now + 0.001 || c[6] + (span / Math.max(1, series.length)) < start - 1) continue;
     if (c[3] < vmin) vmin = c[3];
     if (c[2] > vmax) vmax = c[2];
@@ -1806,7 +1829,8 @@ function drawChannelCandles(ctx, pw, y, h, now, start, span, series, ch) {
   ctx.beginPath();
   ctx.rect(5, y + 1, pw - 5, h - 2);
   ctx.clip();
-  for (const c of series) {
+  for (let i = i0; i < i1; i++) {
+    const c = series[i];
     if (c[6] > now + 0.001 || c[6] + 1 < start - span * 0.2) continue;
     const slotW = (state.musicWindow / span) * pw;
     const bw = Math.max(1, Math.min(16, slotW * (state.barGap || 0.72)));
@@ -1829,11 +1853,11 @@ function drawChannelCandles(ctx, pw, y, h, now, start, span, series, ch) {
   ctx.beginPath();
   let maStarted = false, maSum = 0;
   const MA_N = 5;
-  for (let i = 0; i < series.length; i++) {
+  for (let i = Math.max(0, i0 - MA_N); i < i1; i++) {
     const c = series[i];
     maSum += c[4];
-    if (i >= MA_N) maSum -= series[i - MA_N][4];
-    if (i < MA_N - 1) continue;
+    if (i - MA_N >= 0) maSum -= series[i - MA_N][4];
+    if (i < MA_N - 1 || i < i0) continue;
     if (c[6] > now + 0.001 || c[6] + 1 < start - span * 0.2) { maStarted = false; continue; }
     const x = 5 + ((c[6] + state.musicWindow / 2 - start) / span) * (pw - 5);
     if (x < 0 || x > pw) { maStarted = false; continue; }
@@ -2083,6 +2107,7 @@ function bookNow() {
   return state.mode === 'music' && state.musicAudio ? state.musicAudio.currentTime : 0;
 }
 function refreshBook() {
+  if (!paneIsActive('paneBook')) return;
   tickLast = -1;
   updateBook(bookNow());
   updateTicks(bookNow());
@@ -2479,9 +2504,14 @@ function updateFlow(now) {
   }
 }
 
+function paneIsActive(id) {
+  const p = $(id);
+  return !!(p && p.classList.contains('active'));
+}
 function updateAnalyzerDOM(now) {
   const card = $('analyzerCard');
   if (!card || state.mode !== 'music') return;
+  const vis = paneIsActive('paneVisual');
   if (!analyzerRows || !analyzerRows.length || !document.contains(analyzerRows[0].fill)) {
     analyzerRows = [...card.querySelectorAll('.meter-row')].map(r => ({
       ch: r.dataset.ch,
@@ -2490,33 +2520,38 @@ function updateAnalyzerDOM(now) {
       val: r.querySelector('.meter-val')
     }));
   }
-  for (const r of analyzerRows) {
-    const m = updateMeter(r.ch, now);
-    r.fill.style.width = clamp(m.v, 0, 100).toFixed(1) + '%';
-    r.peak.style.left = clamp(m.p, 0, 100).toFixed(1) + '%';
-    r.val.textContent = Math.round(m.v);
+  if (vis) {
+    for (const r of analyzerRows) {
+      const m = updateMeter(r.ch, now);
+      setCss(r.fill, 'width', clamp(m.v, 0, 100).toFixed(1) + '%');
+      setCss(r.peak, 'left', clamp(m.p, 0, 100).toFixed(1) + '%');
+      setText(r.val, String(Math.round(m.v)));
+    }
   }
   const a = state.meta && state.meta.analysis;
   const f = frameAt(now);
   if (!a || !f) return;
-  $('acCentroid').textContent = Math.round(f.freq) + ' Hz';
-  const i = clamp(Math.round(now / a.hopSec), 1, a.frames.length - 1);
-  $('acTrans').textContent = '+' + Math.max(0, f.rawRms - a.frames[i - 1].rawRms).toFixed(1) + '%';
+  if (vis) {
+    setText($('acCentroid'), Math.round(f.freq) + ' Hz');
+    const i = clamp(Math.round(now / a.hopSec), 1, a.frames.length - 1);
+    setText($('acTrans'), '+' + Math.max(0, f.rawRms - a.frames[i - 1].rawRms).toFixed(1) + '%');
+  }
   const tnow = performance.now();
   if (tnow - (state.analyzerAt || 0) > 120) {
     state.analyzerAt = tnow;
-    updateBook(now);
-    updateTicks(now);
+    if (paneIsActive('paneBook')) { updateBook(now); updateTicks(now); }
     updateIndexStrip(now);
-    updateFlow(now);
+    if (paneIsActive('paneFlow')) updateFlow(now);
     updateLyricsPane(false);
-    let dot = 0, nl = 0, nr = 0;
-    for (let b = 0; b < BAND_COUNT; b++) {
-      const lv = f.bandsL[b], rv = f.bandsR[b];
-      dot += lv * rv; nl += lv * lv; nr += rv * rv;
+    if (vis) {
+      let dot = 0, nl = 0, nr = 0;
+      for (let b = 0; b < BAND_COUNT; b++) {
+        const lv = f.bandsL[b], rv = f.bandsR[b];
+        dot += lv * rv; nl += lv * lv; nr += rv * rv;
+      }
+      setText($('acCorr'), (nl && nr) ? (dot / Math.sqrt(nl * nr)).toFixed(2) : '--');
+      setText($('acPeak'), Math.round(Math.max(state.meters.L.p, state.meters.R.p, state.meters.M.p)) + '%');
     }
-    $('acCorr').textContent = (nl && nr) ? (dot / Math.sqrt(nl * nr)).toFixed(2) : '--';
-    $('acPeak').textContent = Math.round(Math.max(state.meters.L.p, state.meters.R.p, state.meters.M.p)) + '%';
   }
 }
 
@@ -2551,12 +2586,14 @@ function drawMusic(force) {
   const xOf = t => ((t - start) / span) * pw;
   const thick = state.freqThick || [];
   const thin = state.freqThin || [];
+  /* 只遍历屏内数据：长曲目小窗口时 series 可达上万根，全量遍历会吃掉每帧预算 */
+  const i0 = Math.max(0, idxAt(series, start - win * 2) - 1);
+  const i1 = Math.min(series.length, idxAt(series, now + 0.001));
 
   let vmin = Infinity, vmax = -Infinity;
   const ovl = (state.showBoll || state.showEMA) ? buildOverlays() : null;
-  for (let i = 0; i < series.length; i++) {
+  for (let i = i0; i < i1; i++) {
     const c = series[i];
-    if (c[6] + win < start || c[6] > now + 0.001) continue;
     if (c[3] < vmin) vmin = c[3];
     if (c[2] > vmax) vmax = c[2];
     if (thick[i] && thick[i] < vmin) vmin = thick[i];
@@ -2778,7 +2815,8 @@ function drawMusic(force) {
   if (chartType === 'timeline') {
     const ov = ovl || buildOverlays();
     const pts = [];
-    for (const c of series) {
+    for (let i = i0; i < i1; i++) {
+      const c = series[i];
       const tc = c[6] + win / 2;
       if (tc > now + 0.001 || tc < start - win) continue;
       pts.push([xOf(tc), yOf(c[4]), c]);
@@ -2804,7 +2842,7 @@ function drawMusic(force) {
       if (t.glow) ctx.shadowBlur = 0;
       ctx.beginPath();
       let on = false;
-      for (let i = 0; i < series.length; i++) {
+      for (let i = i0; i < i1; i++) {
         const tc = series[i][6] + win / 2;
         if (tc > now + 0.001 || tc < start - win) { on = false; continue; }
         const x = xOf(tc), y = yOf(ov.avg[i]);
@@ -2834,7 +2872,8 @@ function drawMusic(force) {
     }
   } else if (chartType === 'line' || chartType === 'area') {
     const pts = [];
-    for (const c of series) {
+    for (let i = i0; i < i1; i++) {
+      const c = series[i];
       const tc = c[6] + win / 2;
       if (tc > now + 0.001 || tc < start - win) continue;
       pts.push([xOf(tc), yOf(c[4])]);
@@ -2862,7 +2901,8 @@ function drawMusic(force) {
       if (t.glow) ctx.shadowBlur = 0;
     }
   } else {
-    for (const c of series) {
+    for (let i = i0; i < i1; i++) {
+      const c = series[i];
       if (c[6] > now + 0.001 || c[6] + win < start) continue;
       const slotW = (win / span) * pw;
       const bw = Math.max(slotW >= 3 ? 2 : 1, Math.min(30, slotW * (state.barGap || 0.72)));
@@ -2907,7 +2947,7 @@ function drawMusic(force) {
 
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
-  for (let i = 1; i < series.length; i++) {
+  for (let i = Math.max(1, i0); i < i1; i++) {
     const c0 = series[i - 1], c1 = series[i];
     const ta = c0[6] + win / 2, tb = c1[6] + win / 2;
     if (tb > now + 0.001 || tb < start) continue;
@@ -2939,10 +2979,12 @@ function drawMusic(force) {
     for (const ma of MA_DEFS) {
       ctx.beginPath();
       let started = false, sum = 0;
-      for (let i = 0; i < series.length; i++) {
+      /* 从屏内起始点回退一个窗口预置均线，避免每帧从第 0 根累加 */
+      const m0 = Math.max(0, i0 - ma.n);
+      for (let i = m0; i < i1; i++) {
         sum += series[i][4];
-        if (i >= ma.n) sum -= series[i - ma.n][4];
-        if (i < ma.n - 1) continue;
+        if (i - ma.n >= m0) sum -= series[i - ma.n][4];
+        if (i < m0 + ma.n - 1) continue;
         const tc = series[i][6] + win / 2;
         if (tc > now + 0.001 || tc < start - win) { started = false; continue; }
         const x = xOf(tc), y = yOf(sum / ma.n);
@@ -2959,7 +3001,7 @@ function drawMusic(force) {
   }
   if (state.showBoll && ovl && chartType !== 'timeline') {
     const xs = [];
-    for (let i = 0; i < series.length; i++) {
+    for (let i = i0; i < i1; i++) {
       const tc = series[i][6] + win / 2;
       if (tc > now + 0.001) break;
       if (tc < start - win) continue;
@@ -3004,7 +3046,7 @@ function drawMusic(force) {
     for (const [arr, color] of [[ovl.emaF, EMA_COLORS[0]], [ovl.emaS, EMA_COLORS[1]]]) {
       ctx.beginPath();
       let on = false;
-      for (let i = 0; i < series.length; i++) {
+      for (let i = i0; i < i1; i++) {
         const tc = series[i][6] + win / 2;
         if (tc > now + 0.001 || tc < start - win) { on = false; continue; }
         const x = xOf(tc), y = yOf(arr[i]);
@@ -3195,24 +3237,29 @@ function applyFreqHeader() {
   const d = pct(b[3]) - pct(pv[3]);
   const dp = pv[3] ? (b[3] / pv[3] - 1) * 100 : 0;
   const cls = b[4] ? 'up' : 'down';
-  const set = el => { if (!el) return; el.classList.remove('up', 'down', 'flat'); el.classList.add(cls); };
+  const set = el => {
+    if (!el || el.__cls === cls) return;
+    el.__cls = cls;
+    el.classList.remove('up', 'down', 'flat');
+    el.classList.add(cls);
+  };
   set($('qPriceTop')); set($('qChangeTop'));
-  $('qPriceTop').textContent = pct(b[3]);
-  $('priceUnit').textContent = '%';
-  $('qChangeTop').textContent = (d >= 0 ? '+' : '') + d + ' · ' + fmtPct(dp);
-  $('qOpenTop').textContent = pct(b[0]);
-  $('qHighTop').textContent = pct(b[1]);
+  setText($('qPriceTop'), String(pct(b[3])));
+  setText($('priceUnit'), '%');
+  setText($('qChangeTop'), (d >= 0 ? '+' : '') + d + ' · ' + fmtPct(dp));
+  setText($('qOpenTop'), String(pct(b[0])));
+  setText($('qHighTop'), String(pct(b[1])));
   $('qLowTop').textContent = pct(b[2]);
   $('qPrevTop').textContent = pct(pv[3]);
-  $('qVolTop').textContent = pct(b[1]) + '%';
-  $('qAmpTop').textContent = (b[1] - b[2]).toFixed(1) + 'pp';
+  setText($('qVolTop'), pct(b[1]) + '%');
+  setText($('qAmpTop'), (b[1] - b[2]).toFixed(1) + 'pp');
   let mx = 0, mn = 1;
   for (const x of bars) { if (x[3] > mx) mx = x[3]; if (x[3] < mn) mn = x[3]; }
-  $('qRangeHighTop').textContent = pct(mx) + '%';
-  $('qRangeLowTop').textContent = pct(mn) + '%';
-  $('qCountTop').textContent = n;
-  $('qIndex').textContent = '第 ' + (k + 1) + ' / ' + n + ' 段';
-  $('rbIndex').textContent = '第 ' + (k + 1) + ' / ' + n + ' 段';
+  setText($('qRangeHighTop'), pct(mx) + '%');
+  setText($('qRangeLowTop'), pct(mn) + '%');
+  setText($('qCountTop'), String(n));
+  setText($('qIndex'), '第 ' + (k + 1) + ' / ' + n + ' 段');
+  setText($('rbIndex'), '第 ' + (k + 1) + ' / ' + n + ' 段');
 }
 function drawMusicFreq(ctx, w, h, t) {
   const pw = Math.max(80, w - GUT_W);
@@ -3977,8 +4024,9 @@ function initLyricsPane() {
 /* ---------- 3D 背景（three.js）：只铺在 K 线后面 ---------- */
 let stageRAF = 0, stageLast = 0, stage3 = null;
 const STAGE_N = 160, STAGE_COLS = 20, STAGE_ROWS = 8;
+const STAGE_COLORS = { up: 0xff5a3c, down: 0x2fd6a0, grid: 0x1d3557, grid2: 0x122238 };
 function stageColors() {
-  return { up: 0xff5a3c, down: 0x2fd6a0, grid: 0x1d3557, grid2: 0x122238 };
+  return STAGE_COLORS;
 }
 function initStage3D() {
   if (stage3 || !window.THREE) return stage3;
@@ -4099,6 +4147,7 @@ function drawStage3D(ts) {
   const prev = frameAt(Math.max(0, now - 0.15));
   const C = stageColors();
   const col = st.col;
+  const white = st.white || (st.white = new THREE.Color(0xffffff));
   let i = 0;
   for (let r = 0; r < STAGE_ROWS; r++) {
     for (let c = 0; c < STAGE_COLS; c++, i++) {
@@ -4126,7 +4175,7 @@ function drawStage3D(ts) {
       st.mesh.setColorAt(i, col);
       if (st.tops) {
         col.setHex(isUp ? C.up : C.down);
-        col.lerp(new THREE.Color(0xffffff), 0.35 + v * 0.3);
+        col.lerp(white, 0.35 + v * 0.3);
         st.tops.setColorAt(i, col);
       }
     }
@@ -5420,35 +5469,47 @@ function updateAllUI(force) {
   const cls = state.mode === 'music'
     ? (c[8] ? 'up' : 'down')
     : (pct > 0 ? 'up' : pct < 0 ? 'down' : 'flat');
-  const setCls = el => { if (!el) return; el.classList.remove('up', 'down', 'flat'); el.classList.add(cls); };
+  const setCls = el => {
+    if (!el || el.__cls === cls) return;
+    el.__cls = cls;
+    el.classList.remove('up', 'down', 'flat');
+    el.classList.add(cls);
+  };
   setCls($('qPriceTop')); setCls($('qChangeTop'));
   const qc = $('qChapter');
   if (qc) {
     const chap = currentChapterAt();
-    if (chap && chap.title) {
-      qc.hidden = false;
-      qc.innerHTML = '段落 <b>' + escapeHTML(chap.title) + '</b> · ' + escapeHTML(chap.date) +
-        (chap.desc ? ' · ' + escapeHTML(chap.desc) : '');
-    } else qc.hidden = true;
+    const key = chap && chap.title ? (chap.title + '\u0001' + chap.date + '\u0001' + (chap.desc || '')) : '';
+    if (key !== state._chapKey) {
+      state._chapKey = key;
+      if (key) {
+        qc.hidden = false;
+        qc.innerHTML = '段落 <b>' + escapeHTML(chap.title) + '</b> · ' + escapeHTML(chap.date) +
+          (chap.desc ? ' · ' + escapeHTML(chap.desc) : '');
+      } else {
+        qc.hidden = true;
+        qc.textContent = '';
+      }
+    }
   }
-  $('qPriceTop').textContent = state.mode === 'music' ? Math.round(price) : fmtPrice(price, digits);
+  setText($('qPriceTop'), state.mode === 'music' ? String(Math.round(price)) : fmtPrice(price, digits));
   if (state.mode === 'music') {
     const vprev = prev[5] || 0;
     const vchg = c[5] - vprev;
     const vpct = vprev ? vchg / vprev * 100 : 0;
-    $('qChangeTop').textContent = TM().chgPrefix + ' ' + (vchg >= 0 ? '+' : '') + Math.round(vchg) + ' ' + fmtPct(vpct);
+    setText($('qChangeTop'), TM().chgPrefix + ' ' + (vchg >= 0 ? '+' : '') + Math.round(vchg) + ' ' + fmtPct(vpct));
   } else {
-    $('qChangeTop').textContent = fmtSigned(chg, digits) + ' ' + fmtPct(pct);
+    setText($('qChangeTop'), fmtSigned(chg, digits) + ' ' + fmtPct(pct));
   }
-  $('qOpenTop').textContent = fmtPrice(c[1], digits);
-  $('qHighTop').textContent = fmtPrice(c[2], digits);
-  $('qLowTop').textContent = fmtPrice(c[3], digits);
-  $('qPrevTop').textContent = fmtPrice(prevClose, digits);
-  $('qVolTop').textContent = state.mode === 'music' ? Math.round(c[5]) + '%' : fmtVol(c[5]);
-  $('qAmpTop').textContent = prevClose ? ((c[2] - c[3]) / prevClose * 100).toFixed(2) + '%' : '--';
-  $('qRangeHighTop').textContent = fmtPrice(state.meta.high, digits);
-  $('qRangeLowTop').textContent = fmtPrice(state.meta.low, digits);
-  $('qCountTop').textContent = fmtInt(N);
+  setText($('qOpenTop'), fmtPrice(c[1], digits));
+  setText($('qHighTop'), fmtPrice(c[2], digits));
+  setText($('qLowTop'), fmtPrice(c[3], digits));
+  setText($('qPrevTop'), fmtPrice(prevClose, digits));
+  setText($('qVolTop'), state.mode === 'music' ? Math.round(c[5]) + '%' : fmtVol(c[5]));
+  setText($('qAmpTop'), prevClose ? ((c[2] - c[3]) / prevClose * 100).toFixed(2) + '%' : '--');
+  setText($('qRangeHighTop'), fmtPrice(state.meta.high, digits));
+  setText($('qRangeLowTop'), fmtPrice(state.meta.low, digits));
+  setText($('qCountTop'), fmtInt(N));
   const currentTime = state.mode === 'music' && state.musicAudio ? state.musicAudio.currentTime : 0;
   const win = state.musicWindow || 0.25;
   const snapT = state.mode === 'music' ? (state.snapBars ? (Math.floor(currentTime / win) + 0.5) * win : currentTime) : 0;
@@ -5456,15 +5517,15 @@ function updateAllUI(force) {
     ? (state.meta.duration ? clamp(snapT / state.meta.duration, 0, 1) * 100 : 0)
     : (N > 1 ? idx / (N - 1) * 100 : 0);
   const dateText = state.mode === 'music' ? fmtTime(currentTime) : c[0];
-  $('qDate').textContent = dateText;
-  $('qIndex').textContent = '第 ' + fmtInt(idx + 1) + ' / ' + fmtInt(N) + ' 根';
-  $('qProgress').style.width = pctPos.toFixed(2) + '%';
-  $('chartDate').textContent = dateText;
-  $('rbIndex').textContent = '第 ' + fmtInt(idx + 1) + ' / ' + fmtInt(N) + ' 根';
-  $('rbDate').textContent = dateText;
-  $('rbPct').textContent = pctPos.toFixed(1) + '%';
-  $('tlFill').style.width = pctPos.toFixed(2) + '%';
-  $('tlThumb').style.left = pctPos.toFixed(2) + '%';
+  setText($('qDate'), dateText);
+  setText($('qIndex'), '第 ' + fmtInt(idx + 1) + ' / ' + fmtInt(N) + ' 根');
+  setCss($('qProgress'), 'width', pctPos.toFixed(2) + '%');
+  setText($('chartDate'), dateText);
+  setText($('rbIndex'), '第 ' + fmtInt(idx + 1) + ' / ' + fmtInt(N) + ' 根');
+  setText($('rbDate'), dateText);
+  setText($('rbPct'), pctPos.toFixed(1) + '%');
+  setCss($('tlFill'), 'width', pctPos.toFixed(2) + '%');
+  setCss($('tlThumb'), 'left', pctPos.toFixed(2) + '%');
   if (state.mode === 'music' && state.kMode === 'freq') applyFreqHeader();
   updateFoot();
   updateLegend();
@@ -5474,29 +5535,29 @@ function updateAllUI(force) {
 function updateLegend() {
   const el = $('chartLegend');
   if (!el) return;
-  if (!state.series.length) { el.innerHTML = ''; return; }
+  if (!state.series.length) { setHTML(el, ''); return; }
   if (state.mode === 'music') {
     if (state.chartType === 'timeline' && state.kMode !== 'freq') {
       const ov = buildOverlays();
       const i = clamp(Math.floor(state.playhead), 0, state.series.length - 1);
       const avg = Math.round(ov.avg[i] || 0);
       const base = Math.round(ov.avg[ov.avg.length - 1] || 0);
-      el.innerHTML = '<span class="lg" style="color:#999">分时</span>'
+      setHTML(el, '<span class="lg" style="color:#999">分时</span>'
         + '<span class="lg" style="color:#f7b500">均价 <b>' + avg + '</b></span>'
-        + '<span class="lg" style="color:#999">昨收 <b>' + base + '</b></span>';
+        + '<span class="lg" style="color:#999">昨收 <b>' + base + '</b></span>');
       return;
     }
-    if (state.kMode === 'freq' || !state.showMA) { el.innerHTML = ''; return; }
+    if (state.kMode === 'freq' || !state.showMA) { setHTML(el, ''); return; }
     const idx = state.musicHover != null ? clamp(state.musicHover, 0, state.series.length - 1) : clamp(Math.floor(state.playhead), 0, state.series.length - 1);
     let html = '<span class="lg" style="color:#999">MA</span>';
     for (const ma of MA_DEFS) {
       const v = maClose(state.series, idx, ma.n);
       html += '<span class="lg" style="color:' + ma.c + '">MA' + ma.n + ' <b>' + (v == null ? '--' : Math.round(v)) + '</b></span>';
     }
-    el.innerHTML = html;
+    setHTML(el, html);
     return;
   }
-  if (!state.ind || !state.showMA) { el.innerHTML = ''; return; }
+  if (!state.ind || !state.showMA) { setHTML(el, ''); return; }
   const idx = state.hoverIndex != null ? state.hoverIndex : clamp(Math.floor(state.playhead), 0, state.series.length - 1);
   const digits = state.meta.digits || 1;
   let html = '<span class="lg" style="color:#999">MA</span>';
@@ -5504,7 +5565,7 @@ function updateLegend() {
     const v = state.ind.mas[p][idx];
     html += '<span class="lg" style="color:' + MA_COLORS[i] + '">MA' + p + ' <b>' + (v == null ? '--' : fmtPrice(v, digits)) + '</b></span>';
   });
-  el.innerHTML = html;
+  setHTML(el, html);
 }
 function updateFoot() {
   if (!state.meta || !state.series.length) return;
@@ -5516,11 +5577,11 @@ function updateFoot() {
     const b = bars[k], tf = TM();
     const pct = v => Math.round(v);
     const cls = b[4] ? 'up' : 'down';
-    $('footOhlc').innerHTML =
+    setHTML($('footOhlc'),
       '频段 <b>' + hzLabel(bandCenterHz(k, bars.length)) + 'Hz</b> ' +
       tf.foot[0] + ' <b>' + pct(b[0]) + '</b> ' + tf.foot[1] + ' <b>' + pct(b[1]) +
       '</b> ' + tf.foot[2] + ' <b>' + pct(b[2]) + '</b> ' + tf.foot[3] +
-      ' <b class="' + cls + '">' + pct(b[3]) + '</b> ' + tf.foot[4] + ' <b>' + pct(b[1]) + '%</b>';
+      ' <b class="' + cls + '">' + pct(b[3]) + '</b> ' + tf.foot[4] + ' <b>' + pct(b[1]) + '%</b>');
     return;
   }
   const idx = state.mode === 'music'
@@ -5532,10 +5593,10 @@ function updateFoot() {
   const cls = state.mode === 'music' ? (c[8] ? 'up' : 'down') : (chg > 0 ? 'up' : chg < 0 ? 'down' : 'flat');
   const volText = state.mode === 'music' ? Math.round(c[5]) + '%' : fmtVol(c[5]);
   const t = TM();
-  $('footOhlc').innerHTML =
+  setHTML($('footOhlc'),
     t.foot[0] + ' <b>' + fmtPrice(c[1], digits) + '</b> ' + t.foot[1] + ' <b>' + fmtPrice(c[2], digits) +
     '</b> ' + t.foot[2] + ' <b>' + fmtPrice(c[3], digits) +
-    '</b> ' + t.foot[3] + ' <b class="' + cls + '">' + fmtPrice(c[4], digits) + '</b> ' + t.foot[4] + ' <b>' + volText + '</b> · ' + c[0];
+    '</b> ' + t.foot[3] + ' <b class="' + cls + '">' + fmtPrice(c[4], digits) + '</b> ' + t.foot[4] + ' <b>' + volText + '</b> · ' + c[0]);
 }
 function updateTicker() {
   const box = $('ticker');
@@ -5545,45 +5606,47 @@ function updateTicker() {
     const bpm = bpmOf() || '--';
     const bandRms = (a, b) => { let x = 0; for (let i = a; i < b; i++) { const v = f.bands[i]; x += v * v; } return Math.sqrt(x / (b - a)); };
     const loEnd = Math.floor(BAND_COUNT * 0.32), midEnd = Math.floor(BAND_COUNT * 0.66);
-    box.innerHTML =
+    setHTML(box,
       '<span><b>低频</b> <i>' + (f ? bandRms(0, loEnd).toFixed(0) + '%' : '--') + '</i></span>' +
       '<span><b>中频</b> <i>' + (f ? bandRms(loEnd, midEnd).toFixed(0) + '%' : '--') + '</i></span>' +
       '<span><b>高频</b> <i>' + (f ? bandRms(midEnd, BAND_COUNT).toFixed(0) + '%' : '--') + '</i></span>' +
       '<span><b>BPM</b> <i>' + bpm + '</i></span>' +
-      '<span><b>最大音量</b> <i>' + (f ? f.rms.toFixed(0) + '%' : '--') + '</i></span>';
+      '<span><b>最大音量</b> <i>' + (f ? f.rms.toFixed(0) + '%' : '--') + '</i></span>');
   } else {
-    const ids = ['sh', 'hsi', 'n225', 'usdjpy', 'ndx'];
-    box.innerHTML = '';
-    for (const id of ids) {
+    let html = '';
+    for (const id of ['sh', 'hsi', 'n225', 'usdjpy', 'ndx']) {
       const m = LIBRARY.find(x => x.id === id);
       if (!m) continue;
       const chg = m.prevClose ? (m.lastClose / m.prevClose - 1) * 100 : 0;
       const cls = chg > 0 ? 'up' : chg < 0 ? 'down' : 'flat';
-      const span = document.createElement('span');
-      span.innerHTML = '<b>' + m.name + '</b> <i class="' + cls + '" style="font-style:normal">' + fmtPrice(m.lastClose, m.digits) + ' ' + fmtPct(chg) + '</i>';
-      box.appendChild(span);
+      html += '<span><b>' + m.name + '</b> <i class="' + cls + '" style="font-style:normal">' + fmtPrice(m.lastClose, m.digits) + ' ' + fmtPct(chg) + '</i></span>';
     }
+    setHTML(box, html);
   }
 }
 function updateVisualUI() {
   if (!state.meta) return;
-  document.querySelectorAll('#windowChips button').forEach(b => b.classList.toggle('active', Number(b.dataset.win) === state.musicWindow));
-  document.querySelectorAll('#thickChips button').forEach(b => b.classList.toggle('active', Number(b.dataset.thick) === state.musicThick));
-  document.querySelectorAll('#thinChips button').forEach(b => b.classList.toggle('active', Number(b.dataset.thin) === state.musicThin));
-  document.querySelectorAll('#bandChips button').forEach(b => b.classList.toggle('active', b.dataset.bands === 'auto' ? state.spectrumBands === 'auto' : Number(b.dataset.bands) === state.spectrumBands));
-  document.querySelectorAll('#viewChips button').forEach(b => b.classList.toggle('active', Number(b.dataset.view) === state.viewSpan));
-  $('smoothRange').value = state.musicSmooth;
-  $('smoothVal').textContent = state.musicSmooth.toFixed(2);
-  $('volRange').value = state.musicVolume;
-  $('volVal').textContent = Math.round(state.musicVolume * 100) + '%';
+  const chipKey = [state.musicWindow, state.musicThick, state.musicThin, state.spectrumBands, state.viewSpan].join('|');
+  if (chipKey !== state._visChips) {
+    state._visChips = chipKey;
+    document.querySelectorAll('#windowChips button').forEach(b => b.classList.toggle('active', Number(b.dataset.win) === state.musicWindow));
+    document.querySelectorAll('#thickChips button').forEach(b => b.classList.toggle('active', Number(b.dataset.thick) === state.musicThick));
+    document.querySelectorAll('#thinChips button').forEach(b => b.classList.toggle('active', Number(b.dataset.thin) === state.musicThin));
+    document.querySelectorAll('#bandChips button').forEach(b => b.classList.toggle('active', b.dataset.bands === 'auto' ? state.spectrumBands === 'auto' : Number(b.dataset.bands) === state.spectrumBands));
+    document.querySelectorAll('#viewChips button').forEach(b => b.classList.toggle('active', Number(b.dataset.view) === state.viewSpan));
+  }
+  setVal($('smoothRange'), state.musicSmooth);
+  setText($('smoothVal'), state.musicSmooth.toFixed(2));
+  setVal($('volRange'), state.musicVolume);
+  setText($('volVal'), Math.round(state.musicVolume * 100) + '%');
   if (state.mode === 'music') {
-    $('mBpm').textContent = bpmOf() || '--';
-    $('mDuration').textContent = fmtTime(state.meta.duration);
-    $('mSampleRate').textContent = state.meta.sampleRate ? (state.meta.sampleRate / 1000).toFixed(1) + ' kHz' : '--';
-    $('mChannels').textContent = state.meta.channels ? state.meta.channels + ' ch' : '--';
-    $('mFrames').textContent = state.series.length;
-    $('mWindow').textContent = state.musicWindow + ' s / ' + state.viewSpan + ' s';
-    $('mBands').textContent = effBands() + ' 线 ×2';
+    setText($('mBpm'), String(bpmOf() || '--'));
+    setText($('mDuration'), fmtTime(state.meta.duration));
+    setText($('mSampleRate'), state.meta.sampleRate ? (state.meta.sampleRate / 1000).toFixed(1) + ' kHz' : '--');
+    setText($('mChannels'), state.meta.channels ? state.meta.channels + ' ch' : '--');
+    setText($('mFrames'), String(state.series.length));
+    setText($('mWindow'), state.musicWindow + ' s / ' + state.viewSpan + ' s');
+    setText($('mBands'), effBands() + ' 线 ×2');
   }
 }
 
@@ -6366,6 +6429,10 @@ function setPanel(name) {
   syncNavInk();
   syncRpInk();
   if (window.innerWidth <= 1040) $('rightPanel').classList.add('rp-open');
+  const tt = state.musicAudio ? state.musicAudio.currentTime : 0;
+  if (name === 'book') { updateBook(tt); updateTicks(tt); }
+  if (name === 'flow') updateFlow(tt);
+  if (name === 'visual') { updateAnalyzerDOM(tt); if (state.mode === 'music') drawMusic(true); }
   if (name === 'chapters') updateActiveChapter();
   if (name === 'lyrics') { buildLyricsPane(); updateLyricsPane(true); }
 }
@@ -6384,7 +6451,7 @@ function openModal(title, bodyHTML, actions) {
   $('modalMask').hidden = false;
 }
 function closeModal() { $('modalMask').hidden = true; }
-const APP_VERSION = 'beta0.1';
+const APP_VERSION = 'beta0.1.2';
 function showAbout() {
   openModal('关于', `<div style="font:700 12px var(--mono);color:var(--red);letter-spacing:.08em;margin-bottom:10px">K线播放器 '+APP_VERSION+'</div>
 
