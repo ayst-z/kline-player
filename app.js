@@ -114,6 +114,7 @@ function toast(text) {
   el.className = 'toast';
   el.textContent = text;
   stack.appendChild(el);
+  setTimeout(() => el.classList.add('out'), 2400);
   setTimeout(() => el.remove(), 2600);
 }
 function dateToUTC(s) {
@@ -639,8 +640,8 @@ let chart = null;
 const BASE_STYLES = {
   grid: {
     show: true,
-    horizontal: { show: true, size: 1, color: '#e6e6e6', style: 'dashed', dashedValue: [3, 3] },
-    vertical: { show: true, size: 1, color: '#efefef', style: 'dashed', dashedValue: [3, 3] }
+    horizontal: { show: true, size: 1, color: '#e6e6e6', style: 'dashed', dashedValue: [1, 4] },
+    vertical: { show: true, size: 1, color: '#efefef', style: 'dashed', dashedValue: [1, 4] }
   },
   candle: {
     type: 'candle_solid',
@@ -1034,8 +1035,8 @@ let FREQ_LO = FREQ_MIN, FREQ_HI = FREQ_MAX;
 const THEMES = {
   light: {
     canvasBg: '#ffffff', panelBg: '#fdfdfe', panelBorder: '#e6e8ec', mainAccent: '#1677ff',
-    gridMajor: 'rgba(0,0,0,.075)', gridMinor: 'rgba(0,0,0,.035)',
-    timeMajor: 'rgba(0,0,0,.055)', timeMinor: 'rgba(0,0,0,.025)',
+    gridMajor: 'rgba(0,0,0,.105)', gridMinor: 'rgba(0,0,0,.055)',
+    timeMajor: 'rgba(0,0,0,.09)', timeMinor: 'rgba(0,0,0,.05)',
     tickMajor: '#9aa3af', tickMinor: '#c6ccd4',
     up: '#ff381a', down: '#009b67', hot: '#faad14', neutral: 'rgba(0,0,0,.42)',
     thick: '#4f8bff', thin: '#f3a83d',
@@ -1051,8 +1052,8 @@ const THEMES = {
   },
   dark: {
     canvasBg: '#101318', panelBg: '#15191f', panelBorder: '#252b35', mainAccent: '#4f8bff',
-    gridMajor: 'rgba(255,255,255,.075)', gridMinor: 'rgba(255,255,255,.03)',
-    timeMajor: 'rgba(255,255,255,.06)', timeMinor: 'rgba(255,255,255,.022)',
+    gridMajor: 'rgba(255,255,255,.105)', gridMinor: 'rgba(255,255,255,.05)',
+    timeMajor: 'rgba(255,255,255,.09)', timeMinor: 'rgba(255,255,255,.045)',
     tickMajor: '#6b7482', tickMinor: '#414855',
     up: '#ff4d35', down: '#00c285', hot: '#ffc24d', neutral: 'rgba(255,255,255,.4)',
     thick: '#5f9bff', thin: '#ffc24d',
@@ -1608,6 +1609,39 @@ function panelFrame(ctx, x, y, w, h, accent) {
   ctx.strokeStyle = t.panelBorder;
   ctx.lineWidth = 1;
   ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+}
+
+/* 纸面栅格：24px 点阵 + 120px 主格线，预渲染成层，每帧只 blit 一次 */
+const paperGridCache = { key: '', cv: null };
+function paperGridLayer(w, h) {
+  const dark = state.theme === 'dark' || state.stageMode === '3d';
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const key = [w, h, dark ? 'd' : 'l', dpr].join('|');
+  if (paperGridCache.key === key) return paperGridCache.cv;
+  const cv = document.createElement('canvas');
+  cv.width = Math.max(1, Math.round(w * dpr));
+  cv.height = Math.max(1, Math.round(h * dpr));
+  const c = cv.getContext('2d');
+  c.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const step = 24, major = step * 5;
+  c.fillStyle = dark ? 'rgba(200,220,255,.06)' : 'rgba(30,60,110,.06)';
+  for (let y = step; y < h; y += step) {
+    for (let x = step; x < w; x += step) c.fillRect(x, y, 1, 1);
+  }
+  c.strokeStyle = dark ? 'rgba(200,220,255,.085)' : 'rgba(30,60,110,.075)';
+  c.lineWidth = 1;
+  c.beginPath();
+  for (let x = major; x < w; x += major) { c.moveTo(Math.round(x) + 0.5, 0); c.lineTo(Math.round(x) + 0.5, h); }
+  for (let y = major; y < h; y += major) { c.moveTo(0, Math.round(y) + 0.5); c.lineTo(w, Math.round(y) + 0.5); }
+  c.stroke();
+  paperGridCache.key = key;
+  paperGridCache.cv = cv;
+  return cv;
+}
+function drawPaperGrid(ctx, w, h) {
+  if (w < 8 || h < 8) return;
+  const layer = paperGridLayer(w, h);
+  ctx.drawImage(layer, 0, 0, w, h);
 }
 
 function updateMeter(ch, now) {
@@ -2551,6 +2585,7 @@ function drawMusic(force) {
 
   panelFrame(ctx, 0, 0, pw, mainH, t.mainAccent);
   drawVideoLayer(ctx, 0, 0, pw, mainH);
+  drawPaperGrid(ctx, pw, mainH);
   if (state.wall3d && state.stageMode !== '3d') draw3DWall(ctx, pw, mainH, t, state.musicAudio ? state.musicAudio.currentTime : 0);
   /* 右侧价格轴：独立底色带，观感更接近行情终端 */
   ctx.fillStyle = t.panelBg;
@@ -2563,6 +2598,7 @@ function drawMusic(force) {
   ctx.lineTo(pw + 0.5, mainH);
   ctx.stroke();
   const hzMain = [60, 125, 250, 500, 1000, 2000, 4000, 8000];
+  const majorYs = [];
   for (const f of hzMain) {
     if (f < fs.min || f > fs.max) continue;
     const yy = yOf(f);
@@ -2570,10 +2606,12 @@ function drawMusic(force) {
     const major = f === 250 || f === 1000 || f === 4000;
     ctx.strokeStyle = major ? t.gridMajor : t.gridMinor;
     ctx.lineWidth = 1;
+    ctx.setLineDash(major ? [] : [1, 4]);
     ctx.beginPath();
     ctx.moveTo(5, Math.round(yy) + 0.5);
     ctx.lineTo(pw, Math.round(yy) + 0.5);
     ctx.stroke();
+    ctx.setLineDash([]);
     ctx.strokeStyle = major ? t.tickMajor : t.tickMinor;
     ctx.beginPath();
     ctx.moveTo(pw, Math.round(yy) + 0.5);
@@ -2584,6 +2622,7 @@ function drawMusic(force) {
     ctx.textAlign = 'right';
     ctx.fillText(hzLabel(f), pw + GUT_METER - 4, Math.round(yy) + 3);
     ctx.textAlign = 'left';
+    if (major) majorYs.push(Math.round(yy) + 0.5);
   }
   const cur = frameAt(now);
   if (cur && state.musicHover == null) {
@@ -2625,20 +2664,55 @@ function drawMusic(force) {
     ctx.globalAlpha = 1;
   }
   const firstSec = Math.ceil(start);
+  const majorXs = [];
+  const majorLabels = [];
   for (let s = firstSec; s <= start + span; s++) {
     const xx = ((s - start) / span) * pw;
     const major = s % 5 === 0;
+    const sx = Math.round(xx) + 0.5;
     ctx.strokeStyle = major ? t.timeMajor : t.timeMinor;
+    ctx.setLineDash(major ? [] : [1, 4]);
     ctx.beginPath();
-    ctx.moveTo(Math.round(xx) + 0.5, 2);
-    ctx.lineTo(Math.round(xx) + 0.5, mainH - 2);
+    ctx.moveTo(sx, 2);
+    ctx.lineTo(sx, mainH - 2);
     ctx.stroke();
     if (major) {
+      ctx.setLineDash([]);
       ctx.strokeStyle = t.tickMinor;
       ctx.beginPath();
-      ctx.moveTo(Math.round(xx) + 0.5, mainH);
-      ctx.lineTo(Math.round(xx) + 0.5, mainH + 5);
+      ctx.moveTo(sx, mainH);
+      ctx.lineTo(sx, mainH + 5);
       ctx.stroke();
+      majorXs.push(sx);
+      majorLabels.push([sx, s]);
+    }
+  }
+  ctx.setLineDash([]);
+  /* 主格交点十字：纸面栅格的视觉锚点 */
+  if (majorXs.length && majorYs.length) {
+    ctx.strokeStyle = t.tickMinor;
+    ctx.globalAlpha = 0.6;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (const x of majorXs) {
+      for (const y of majorYs) {
+        ctx.moveTo(x - 2, y);
+        ctx.lineTo(x + 2.5, y);
+        ctx.moveTo(x, y - 2);
+        ctx.lineTo(x, y + 2.5);
+      }
+    }
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+  /* 时间刻度标签落在主图与副图之间的格栅缝里 */
+  if (specCount && pgm.gap >= 10 && majorLabels.length) {
+    ctx.fillStyle = t.text3;
+    ctx.font = '9px Consolas';
+    ctx.textAlign = 'left';
+    for (const [x, s] of majorLabels) {
+      if (x > pw + 2) continue;
+      ctx.fillText(span > 60 ? fmtTime(s) : s + 's', x + 3, mainH + 9);
     }
   }
   /* 节拍网格（BPM 推导）：像素间距过密时自动跳过 */
@@ -3159,6 +3233,7 @@ function drawMusicFreq(ctx, w, h, t) {
   state.freqGeom = { pw, mainH, n, yOf };
   panelFrame(ctx, 0, 0, pw, mainH, t.mainAccent);
   drawVideoLayer(ctx, 0, 0, pw, mainH);
+  drawPaperGrid(ctx, pw, mainH);
   if (state.wall3d && state.stageMode !== '3d') draw3DWall(ctx, pw, mainH, t, state.musicAudio ? state.musicAudio.currentTime : 0);
   ctx.fillStyle = t.panelBg;
   ctx.globalAlpha = 0.94;
@@ -3171,16 +3246,52 @@ function drawMusicFreq(ctx, w, h, t) {
   ctx.stroke();
   ctx.font = '9px Consolas';
   ctx.textAlign = 'right';
+  const levelYs = [];
   for (const p of [0.25, 0.5, 0.75, 1]) {
     const yy = yOf(p * sc);
     if (yy < 3 || yy > mainH - 2) continue;
-    ctx.strokeStyle = p === 0.5 ? t.gridMajor : t.gridMinor;
+    const major = p === 0.5;
+    ctx.strokeStyle = major ? t.gridMajor : t.gridMinor;
+    ctx.setLineDash(major ? [] : [1, 4]);
     ctx.beginPath();
     ctx.moveTo(0, yy);
     ctx.lineTo(pw, yy);
     ctx.stroke();
+    ctx.setLineDash([]);
     ctx.fillStyle = t.text3;
     ctx.fillText(Math.round(sc * Math.pow(p, 1 / GAMMA)) + '%', pw + GUT_METER - 4, yy - 3);
+    levelYs.push(yy);
+  }
+  /* 频率主格线：与底部刻度同一套频率，上下贯通 */
+  const majorFx = [];
+  for (const f of [50, 100, 250, 500, 1000, 2000, 4000, 8000]) {
+    if (f < FREQ_LO || f > FREQ_HI) continue;
+    const x = Math.round(bandIndexOfFreq(f, n) / n * pw) + 0.5;
+    if (x < 4 || x > pw - 2) continue;
+    const major = f === 250 || f === 1000 || f === 4000;
+    ctx.strokeStyle = major ? t.gridMinor : t.timeMinor;
+    ctx.setLineDash(major ? [] : [1, 4]);
+    ctx.beginPath();
+    ctx.moveTo(x, 2);
+    ctx.lineTo(x, mainH - 2);
+    ctx.stroke();
+    if (major) majorFx.push(x);
+  }
+  ctx.setLineDash([]);
+  if (majorFx.length && levelYs.length) {
+    ctx.strokeStyle = t.tickMinor;
+    ctx.globalAlpha = 0.55;
+    ctx.beginPath();
+    for (const x of majorFx) {
+      for (const y of levelYs) {
+        ctx.moveTo(x - 2, y);
+        ctx.lineTo(x + 2.5, y);
+        ctx.moveTo(x, y - 2);
+        ctx.lineTo(x, y + 2.5);
+      }
+    }
+    ctx.stroke();
+    ctx.globalAlpha = 1;
   }
   /* 频段太密时合并成更少的柱子，宽度够、看得清 */
   const stepK = Math.max(1, Math.ceil(n / 150));
@@ -3325,8 +3436,7 @@ function drawMusicFreq(ctx, w, h, t) {
   ctx.textAlign = 'center';
   for (const f of [50, 100, 250, 500, 1000, 2000, 4000, 8000]) {
     if (f < FREQ_LO || f > FREQ_HI) continue;
-    const kx = bandIndexOfFreq(f, n);
-    const x = kx * slot;
+    const x = bandIndexOfFreq(f, n) / n * pw;
     if (x < 16 || x > pw - 16) continue;
     const major = f === 250 || f === 1000 || f === 4000;
     ctx.strokeStyle = major ? t.tickMajor : t.tickMinor;
@@ -5177,6 +5287,13 @@ function rebuildPeriodTabs() {
       box.appendChild(b);
     });
   }
+  const inkAxis = document.createElement('i');
+  inkAxis.className = 'period-ink axis-ink';
+  box.appendChild(inkAxis);
+  const inkWin = document.createElement('i');
+  inkWin.className = 'period-ink win-ink';
+  box.appendChild(inkWin);
+  requestAnimationFrame(syncPeriodInk);
 }
 function rebuildSpeedOptions() {
   const sel = $('rbSpeed');
@@ -6204,11 +6321,50 @@ function saveSettings() {
 }
 
 /* ================= panels / modals ================= */
+/* 页签滑块：共享指示器按 active 按钮的 offset 走 transform，只动合成层 */
+function syncNavInk() {
+  const nav = $('topnav');
+  if (!nav) return;
+  const ink = nav.querySelector('.nav-ink');
+  const b = nav.querySelector('button.active');
+  if (!ink || !b) { nav.classList.remove('has-ink'); return; }
+  nav.classList.add('has-ink');
+  const cs = getComputedStyle(b);
+  const padL = parseFloat(cs.paddingLeft) || 0;
+  const padR = parseFloat(cs.paddingRight) || 0;
+  ink.style.setProperty('--ink-x', (b.offsetLeft + padL) + 'px');
+  ink.style.setProperty('--ink-w', String(Math.max(1, b.offsetWidth - padL - padR)));
+}
+function syncPeriodInk() {
+  const box = $('periodTabs');
+  if (!box) return;
+  const place = (ink, b) => {
+    if (!ink) return;
+    if (!b) { ink.classList.add('off'); return; }
+    ink.classList.remove('off');
+    ink.style.setProperty('--ink-x', b.offsetLeft + 'px');
+    ink.style.setProperty('--ink-w', String(b.offsetWidth));
+  };
+  place(box.querySelector('.period-ink.axis-ink'), box.querySelector('button[data-axis].active'));
+  place(box.querySelector('.period-ink.win-ink'), box.querySelector('button.active:not([data-axis])'));
+}
+function syncRpInk() {
+  const rail = $('rpRail');
+  if (!rail) return;
+  const ink = rail.querySelector('.rp-ink');
+  const b = rail.querySelector('button.active');
+  if (!ink || !b) { rail.classList.remove('has-ink'); return; }
+  rail.classList.add('has-ink');
+  ink.style.setProperty('--rp-y', b.offsetTop + 'px');
+  ink.style.setProperty('--rp-h', String(b.offsetHeight));
+}
 function setPanel(name) {
   const map = { quote: 'paneQuote', book: 'paneBook', flow: 'paneFlow', lyrics: 'paneLyrics', visual: 'paneVisual', chapters: 'paneChapters' };
   document.querySelectorAll('.rp-pane').forEach(p => p.classList.toggle('active', p.id === map[name]));
   document.querySelectorAll('.rp-rail button[data-panel]').forEach(b => b.classList.toggle('active', b.dataset.panel === name));
   document.querySelectorAll('#topnav button[data-nav]').forEach(b => b.classList.toggle('active', b.dataset.nav === name));
+  syncNavInk();
+  syncRpInk();
   if (window.innerWidth <= 1040) $('rightPanel').classList.add('rp-open');
   if (name === 'chapters') updateActiveChapter();
   if (name === 'lyrics') { buildLyricsPane(); updateLyricsPane(true); }
@@ -6740,6 +6896,7 @@ function bindEvents() {
       rebuildPeriodTabs();
       syncStyleChips();
       drawMusic(true);
+      canvasSwap();
       updateAllUI(true);
       updateStaticInfo();
       updateVisualUI();
@@ -6767,6 +6924,7 @@ function bindEvents() {
       }
       document.querySelectorAll('#periodTabs button').forEach(x => x.classList.toggle('active', x === b));
       document.querySelectorAll('#windowChips button').forEach(x => x.classList.toggle('active', Number(x.dataset.win) === state.musicWindow));
+      syncPeriodInk();
       saveSettings();
     } else if (b.dataset.period) {
       setPeriod(b.dataset.period);
@@ -6928,6 +7086,7 @@ function bindEvents() {
     }
     document.querySelectorAll('#windowChips button').forEach(x => x.classList.toggle('active', x === b));
     document.querySelectorAll('#periodTabs button').forEach(x => x.classList.toggle('active', Number(x.dataset.win) === state.musicWindow));
+    syncPeriodInk();
     saveSettings();
   }));
   document.querySelectorAll('#bandChips button').forEach(b => b.addEventListener('click', () => {
@@ -7309,13 +7468,20 @@ function bindEvents() {
     else if (e.key === 'Escape') { hideStartOverlay(); }
   });
 
-  let mqTimer = 0;
+  let mqTimer = 0, resizeRAF = 0;
   const onResize = () => {
     clearTimeout(mqTimer);
     mqTimer = setTimeout(refreshMarquees, 180);
-    if (state.mode === 'music') { resizeMusicCanvas(); drawMusic(true); }
-    else { try { chart && chart.resize(); } catch (e) {} }
-    updateSidebarFloat();
+    syncNavInk();
+    syncPeriodInk();
+    syncRpInk();
+    if (resizeRAF) return;
+    resizeRAF = requestAnimationFrame(() => {
+      resizeRAF = 0;
+      if (state.mode === 'music') { resizeMusicCanvas(); drawMusic(true); }
+      else { try { chart && chart.resize(); } catch (e) {} }
+      updateSidebarFloat();
+    });
   };
   window.addEventListener('resize', onResize);
   if (window.ResizeObserver && $('chartWrap')) {
@@ -7367,6 +7533,7 @@ function setPeriod(period) {
     canvasSwap();
   }
   document.querySelectorAll('#periodTabs button').forEach(b => b.classList.toggle('active', b.dataset.period === period));
+  syncPeriodInk();
   buildChapters();
   buildTimelineMarks();
   updateStaticInfo();
@@ -7489,6 +7656,7 @@ async function init() {
   applyHighLow();
   applyCandleType();
   updateSubtabs();
+  requestAnimationFrame(() => { syncNavInk(); syncPeriodInk(); syncRpInk(); });
   if (window.innerWidth <= 900) $('sidebar').classList.add('collapsed');
   updateSidebarFloat();
 
