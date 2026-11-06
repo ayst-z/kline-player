@@ -7,6 +7,7 @@
 | KLineChart v9.8.12 | `vendor/klinecharts.min.js` | Apache License 2.0，见 `vendor/KLineChart-LICENSE.txt` |
 | 日线行情数据（9 个片源） | `data/*.js`（`usdjpy` 等） | 由 `tools/build_data.py` 抓取自东方财富公开行情接口，仅作演示 |
 | 演示音频 | `audio/demo.mp3`、`data/demo-audio.js` | 本项目代码合成，随仓库以 MIT 分发 |
+| README 展示图 | `docs/showcase-mv-*.jpg` | 同花顺官方《真英雄》MV 截图，仅作播放器功能演示；版权归原权利方，不包含在安装包内 |
 
 ## 仅借鉴思路、未使用其代码的项目
 
