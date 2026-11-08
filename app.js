@@ -6429,6 +6429,12 @@ function setPanel(name) {
   syncNavInk();
   syncRpInk();
   if (window.innerWidth <= 1040) $('rightPanel').classList.add('rp-open');
+  if (isMobileLayout()) {
+    $('sidebar').classList.remove('mobile-open');
+    $('rightPanel').classList.add('rp-open');
+    setMobileBackdrop(true);
+    syncMobileDock();
+  }
   const tt = state.musicAudio ? state.musicAudio.currentTime : 0;
   if (name === 'book') { updateBook(tt); updateTicks(tt); }
   if (name === 'flow') updateFlow(tt);
@@ -7129,8 +7135,25 @@ function bindEvents() {
   on('trSide', 'click', toggleSidebar);
   on('btnCollapseSide', 'click', toggleSidebar);
   on('btnSideFloat', 'click', toggleSidebar);
+  on('btnMobile', 'click', () => applyMobileMode(!isMobileLayout(), true));
+  on('mobileBackdrop', 'click', closeMobileDrawers);
+  document.querySelectorAll('#mobileDock [data-mob]').forEach(btn => btn.addEventListener('click', () => {
+    const act = btn.dataset.mob;
+    if (act === 'library') { toggleSidebar(); return; }
+    if (act === 'panel') {
+      if ($('rightPanel').classList.contains('rp-open')) closeMobileDrawers();
+      else setPanel('quote');
+      return;
+    }
+    if (act === 'settings') { setPanel('visual'); return; }
+    if (act === 'theme') { setTheme(state.theme === 'dark' ? 'light' : 'dark'); return; }
+    if (act === 'full') toggleFullscreen();
+  }));
   document.querySelectorAll('#subtabs button[data-sub]').forEach(b => b.addEventListener('click', () => toggleSub(b.dataset.sub)));
-  on('btnRpClose', 'click', () => $('rightPanel').classList.remove('rp-open'));
+  on('btnRpClose', 'click', () => {
+    $('rightPanel').classList.remove('rp-open');
+    if (isMobileLayout()) { setMobileBackdrop(false); syncMobileDock(); }
+  });
 
   document.querySelectorAll('#topnav button[data-nav]').forEach(b => b.addEventListener('click', () => {
     const nav = b.dataset.nav;
@@ -7665,7 +7688,73 @@ function applyCandleType() {
   };
   try { chart.setStyles({ candle: { type: map[state.chartType] || (state.hollow ? 'candle_up_stroke' : 'candle_solid') } }); } catch (e) {}
 }
+let mobilePref = (() => { try { return localStorage.getItem('kline.mobile'); } catch (e) { return null; } })();
+const MOBILE_MQ = window.matchMedia('(max-width: 760px)');
+const PORTRAIT_MQ = window.matchMedia('(orientation: portrait)');
+
+function isMobileLayout() {
+  return document.documentElement.dataset.mobile === '1';
+}
+function mobileAutoOn() {
+  return MOBILE_MQ.matches || (PORTRAIT_MQ.matches && window.innerWidth <= 900);
+}
+function setMobileBackdrop(show) {
+  const bd = $('mobileBackdrop');
+  if (bd) bd.hidden = !show;
+}
+function syncMobileDock() {
+  const sb = $('sidebar'), rp = $('rightPanel');
+  const lib = document.querySelector('#mobileDock [data-mob="library"]');
+  const panel = document.querySelector('#mobileDock [data-mob="panel"]');
+  if (lib) lib.classList.toggle('on', !!(sb && sb.classList.contains('mobile-open')));
+  if (panel) panel.classList.toggle('on', !!(rp && rp.classList.contains('rp-open')));
+}
+function closeMobileDrawers() {
+  const sb = $('sidebar'), rp = $('rightPanel');
+  if (sb) sb.classList.remove('mobile-open');
+  if (rp) rp.classList.remove('rp-open');
+  setMobileBackdrop(false);
+  syncMobileDock();
+}
+function applyMobileMode(on, persist) {
+  on = !!on;
+  document.documentElement.dataset.mobile = on ? '1' : '0';
+  const btn = $('btnMobile');
+  if (btn) {
+    btn.classList.toggle('active', on);
+    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    const label = btn.querySelector('.m-label');
+    if (label) label.textContent = on ? '桌面版' : '手机模式';
+  }
+  if (persist) {
+    mobilePref = on ? '1' : '0';
+    try { localStorage.setItem('kline.mobile', mobilePref); } catch (e) {}
+  }
+  closeMobileDrawers();
+  updateSidebarFloat();
+  requestAnimationFrame(() => {
+    try { chart && chart.resize(); } catch (e) {}
+    if (state.mode === 'music') {
+      try { resizeMusicCanvas(); drawMusic(true); } catch (e) {}
+    }
+  });
+  setTimeout(() => {
+    try { chart && chart.resize(); } catch (e) {}
+    document.querySelectorAll('#sidebar .q-name').forEach(el => applyMarquee(el));
+  }, 260);
+}
 function toggleSidebar() {
+  if (isMobileLayout()) {
+    const sb = $('sidebar');
+    const open = !sb.classList.contains('mobile-open');
+    $('rightPanel').classList.remove('rp-open');
+    sb.classList.remove('collapsed');
+    sb.classList.toggle('mobile-open', open);
+    setMobileBackdrop(open);
+    syncMobileDock();
+    if (open) setTimeout(() => document.querySelectorAll('#sidebar .q-name').forEach(el => applyMarquee(el)), 240);
+    return;
+  }
   $('sidebar').classList.toggle('collapsed');
   updateSidebarFloat();
   try { chart && chart.resize(); } catch (e) {}
@@ -7677,6 +7766,11 @@ function toggleSidebar() {
 function updateSidebarFloat() {
   const sb = $('sidebar'), float = $('btnSideFloat');
   if (!sb || !float) return;
+  if (isMobileLayout()) {
+    float.style.display = 'none';
+    $('app').classList.remove('side-collapsed');
+    return;
+  }
   const collapsed = sb.classList.contains('collapsed');
   float.style.display = collapsed ? 'block' : 'none';
   $('app').classList.toggle('side-collapsed', collapsed);
@@ -7726,6 +7820,17 @@ async function init() {
   requestAnimationFrame(() => { syncNavInk(); syncPeriodInk(); syncRpInk(); });
   if (window.innerWidth <= 900) $('sidebar').classList.add('collapsed');
   updateSidebarFloat();
+  applyMobileMode(mobilePref === null ? mobileAutoOn() : mobilePref === '1', false);
+  const onViewportChange = () => {
+    if (mobilePref === null) applyMobileMode(mobileAutoOn(), false);
+    else setTimeout(() => {
+      try { chart && chart.resize(); } catch (e) {}
+      if (state.mode === 'music') { resizeMusicCanvas(); drawMusic(true); }
+    }, 120);
+  };
+  MOBILE_MQ.addEventListener?.('change', onViewportChange);
+  PORTRAIT_MQ.addEventListener?.('change', onViewportChange);
+  window.addEventListener('orientationchange', () => setTimeout(onViewportChange, 260));
 
   const params = new URLSearchParams(location.search);
   if (params.has('danmaku')) setDanmaku(params.get('danmaku') !== '0');

@@ -2,8 +2,17 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>K线播放器 · 音乐可视化</title>
+<script>
+(function () {
+  try {
+    var pref = localStorage.getItem('kline.mobile');
+    var auto = matchMedia('(max-width:760px)').matches || (matchMedia('(orientation: portrait)').matches && window.innerWidth <= 900);
+    document.documentElement.dataset.mobile = (pref === null ? auto : pref === '1') ? '1' : '0';
+  } catch (e) { document.documentElement.dataset.mobile = '0'; }
+})();
+</script>
 <script>
 window.addEventListener('error', function (e) {
   document.title = 'ERR: ' + e.message;
@@ -13,7 +22,7 @@ window.addEventListener('error', function (e) {
   document.body.appendChild(d);
 }, true);
 </script>
-<link rel="stylesheet" href="styles.css?v=20261109a">
+<link rel="stylesheet" href="styles.css?v=20261110a">
 </head>
 <body>
 <div class="load-bar" id="loadBar" hidden><i id="loadBarFill"></i><b id="loadBarText"></b></div>
@@ -41,6 +50,10 @@ window.addEventListener('error', function (e) {
     <div class="top-actions">
       <span class="src" id="sourceLabel">音频源 · 本地文件</span>
       <span class="clock" id="titleClock">--:--:--</span>
+      <button class="btn ghost mobile-toggle" id="btnMobile" title="手机模式 / 竖屏显示" aria-pressed="false">
+        <svg class="mob-ico" viewBox="0 0 24 24"><rect x="7" y="2.5" width="10" height="19" rx="2.2"></rect><path d="M10.5 5.2h3M11 18.6h2"></path></svg>
+        <span class="m-label">手机模式</span>
+      </button>
       <button class="btn ghost" id="btnStage" title="普通界面 / 3D 沉浸界面">界面 · 普通</button>
       <span class="hdr-badge" id="hdrBadge" hidden title="当前显示器支持 HDR；导出母版为 HDR10（bt2020 / PQ）">HDR</span>
       <button class="btn ghost" id="btnThemeTop" title="切换深浅主题 (T)">深色</button>
@@ -693,6 +706,25 @@ window.addEventListener('error', function (e) {
     </aside>
 
   </div>
+
+  <nav class="mobile-dock" id="mobileDock" aria-label="移动端快捷栏">
+    <button data-mob="library" aria-label="曲库">
+      <svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"></path></svg><span>曲库</span>
+    </button>
+    <button data-mob="panel" aria-label="盘口面板">
+      <svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="2"></rect><path d="M9 5v14M15 9h3M15 13h3"></path></svg><span>面板</span>
+    </button>
+    <button data-mob="settings" aria-label="可视化设置">
+      <svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"></path><circle cx="16" cy="7" r="2"></circle><circle cx="8" cy="17" r="2"></circle></svg><span>设置</span>
+    </button>
+    <button data-mob="theme" aria-label="切换深浅主题">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.2"></circle><path d="M12 2.8v2M12 19.2v2M21.2 12h-2M4.8 12h-2M18.5 5.5l-1.4 1.4M6.9 17.1l-1.4 1.4M18.5 18.5l-1.4-1.4M6.9 6.9L5.5 5.5"></path></svg><span>主题</span>
+    </button>
+    <button data-mob="full" aria-label="全屏">
+      <svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"></path></svg><span>全屏</span>
+    </button>
+  </nav>
+  <div class="mobile-backdrop" id="mobileBackdrop" hidden></div>
 
       <section class="sub-dock" id="subDock" hidden>
         <div class="sd-head">
